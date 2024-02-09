@@ -4,7 +4,8 @@ import (
 	"context"
 	"fmt"
 	"github.com/charmbracelet/huh"
-	"github.com/fatih/color"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/log"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -19,28 +20,29 @@ import (
 	"path/filepath"
 )
 
-var errColor = color.New(color.FgRed)
-var reset = "\033[0m"
-var bold = "\033[1m"
-var underline = "\033[4m"
-var strike = "\033[9m"
-var italic = "\033[3m"
+var Logger *log.Logger
 
-var cRed = "\033[31m"
-var cGreen = "\033[32m"
-var cYellow = "\033[33m"
-var cBlue = "\033[34m"
-var cPurple = "\033[35m"
-var cCyan = "\033[36m"
-var cWhite = "\033[37m"
+func init() {
+	styles := log.DefaultStyles()
+	styles.Levels[log.FatalLevel] = lipgloss.NewStyle().SetString("FATAL!!").Padding(0, 1, 0, 1).Background(lipgloss.AdaptiveColor{Light: "#9966CC", Dark: "#9966CC"}).Foreground(lipgloss.Color("0"))
+	styles.Levels[log.ErrorLevel] = lipgloss.NewStyle().SetString("ERROR!!").Padding(0, 1, 0, 1).Background(lipgloss.AdaptiveColor{Light: "203", Dark: "204"}).Foreground(lipgloss.Color("0"))
+	styles.Keys["critical"] = lipgloss.NewStyle().Foreground(lipgloss.Color("#9966CC"))
+	styles.Values["critical"] = lipgloss.NewStyle().Bold(true)
+	styles.Keys["err"] = lipgloss.NewStyle().Foreground(lipgloss.Color("204"))
+	styles.Values["err"] = lipgloss.NewStyle().Bold(true)
+	styles.Keys["status"] = lipgloss.NewStyle().Foreground(lipgloss.Color("204"))
+	styles.Values["status"] = lipgloss.NewStyle().Bold(true)
+	styles.Keys["object"] = lipgloss.NewStyle().Foreground(lipgloss.Color("204"))
+	styles.Values["object"] = lipgloss.NewStyle().Bold(true)
+	styles.Keys["ready"] = lipgloss.NewStyle().Foreground(lipgloss.Color("204"))
+	styles.Values["ready"] = lipgloss.NewStyle().Bold(true)
+	Logger = log.New(os.Stderr)
+	Logger.SetStyles(styles)
+}
 
 func errHandle(err error) {
 	if err != nil {
-		_, err2 := errColor.Printf("[ EXIT ] > %v\n", err)
-		if err2 != nil {
-			os.Exit(1)
-		}
-		os.Exit(1)
+		Logger.Fatal("Exit", "critical", err)
 	}
 }
 
@@ -225,9 +227,9 @@ func troubleShootExternalSecret(cr CustomResource, kubeClient dynamic.Interface,
 		}
 	}
 	if len(problematicExternalSecrets) > 0 {
-		fmt.Printf("%v[ ERROR ] >> There are some issues with externalSecrets':\n", cRed)
+		Logger.Error("ERROR DETECTED")
 		for _, es := range problematicExternalSecrets {
-			fmt.Printf("%vName: %s, Status: %s, Ready: %s \n", cBlue, es["Name"], es["Status"], es["Ready"])
+			Logger.Error("ExternalSecret", "object", es["Name"], "status", es["Status"], "ready", es["Ready"])
 		}
 	} else {
 		fmt.Println("No issues found with externalSecrets")
@@ -242,6 +244,7 @@ type CustomResource struct {
 }
 
 func main() {
+
 	kubeConfigPath := getKubeConfigPath()
 	config := getKubeConfigFromFile(kubeConfigPath)
 	kubeContextsList := getKubeContexts(config)
