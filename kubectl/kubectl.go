@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/lipgloss/table"
 	"github.com/charmbracelet/log"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -18,18 +19,72 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 )
 
-var Logger *log.Logger
+const (
+	purple    = lipgloss.Color("99")
+	gray      = lipgloss.Color("245")
+	lightGray = lipgloss.Color("241")
+)
+
+type CustomResource struct {
+	group            string
+	version          string
+	kind             string
+	successCondition string
+	prettyName       string
+}
+
+var (
+	re = lipgloss.NewRenderer(os.Stdout)
+	// HeaderStyle is the lipgloss style used for the table headers.
+	HeaderStyle = re.NewStyle().Foreground(purple).Bold(true).Align(lipgloss.Center)
+	// CellStyle is the base lipgloss style used for the table rows.
+	CellStyle = re.NewStyle().Padding(0, 1).Width(14)
+	// OddRowStyle is the lipgloss style used for odd-numbered table rows.
+	OddRowStyle = CellStyle.Copy().Foreground(gray)
+	// EvenRowStyle is the lipgloss style used for even-numbered table rows.
+	EvenRowStyle = CellStyle.Copy().Foreground(lightGray)
+	// BorderStyle is the lipgloss style used for the table border.
+	BorderStyle = lipgloss.NewStyle().Foreground(purple)
+	// Logger for output
+	Logger *log.Logger
+	Es     = CustomResource{
+		group:            "external-secrets.io",
+		version:          "v1beta1",
+		kind:             "externalsecrets",
+		successCondition: "SecretSynced",
+		prettyName:       "ExternalSecret",
+	}
+	Ks = CustomResource{
+		group:            "kustomize.toolkit.fluxcd.io",
+		version:          "v1",
+		kind:             "kustomizations",
+		successCondition: "SecretSynced",
+		prettyName:       "Kustomization",
+	}
+	GitRepo = CustomResource{
+		group:            "source.toolkit.fluxcd.io",
+		version:          "v1",
+		kind:             "gitrepository",
+		successCondition: "SecretSynced",
+		prettyName:       "GitRepository",
+	}
+)
 
 func init() {
 	styles := log.DefaultStyles()
-	styles.Levels[log.FatalLevel] = lipgloss.NewStyle().SetString("FATAL!!").Padding(0, 1, 0, 1).Background(lipgloss.AdaptiveColor{Light: "#9966CC", Dark: "#9966CC"}).Foreground(lipgloss.Color("0"))
-	styles.Levels[log.ErrorLevel] = lipgloss.NewStyle().SetString("ERROR!!").Padding(0, 1, 0, 1).Background(lipgloss.AdaptiveColor{Light: "203", Dark: "204"}).Foreground(lipgloss.Color("0"))
+	styles.Levels[log.FatalLevel] = lipgloss.NewStyle().SetString("FATAL!!").Padding(0, 1, 0, 1).Background(lipgloss.AdaptiveColor{Light: "#9966CC", Dark: "#9966CC"}).Foreground(lipgloss.Color("0")).Bold(true)
+	styles.Levels[log.ErrorLevel] = lipgloss.NewStyle().SetString("ERROR!!").Padding(0, 1, 0, 1).Background(lipgloss.AdaptiveColor{Light: "203", Dark: "203"}).Foreground(lipgloss.Color("0")).Bold(true)
+	styles.Levels[log.InfoLevel] = lipgloss.NewStyle().SetString("INFO >>").Padding(0, 1, 0, 1).Background(lipgloss.AdaptiveColor{Light: "45", Dark: "45"}).Foreground(lipgloss.Color("0")).Bold(true)
+	styles.Levels[log.DebugLevel] = lipgloss.NewStyle().SetString("DEBUG ::").Padding(0, 1, 0, 1).Background(lipgloss.AdaptiveColor{Light: "75", Dark: "75"}).Foreground(lipgloss.Color("0")).Bold(true)
 	styles.Keys["critical"] = lipgloss.NewStyle().Foreground(lipgloss.Color("#9966CC"))
 	styles.Values["critical"] = lipgloss.NewStyle().Bold(true)
 	styles.Keys["err"] = lipgloss.NewStyle().Foreground(lipgloss.Color("204"))
 	styles.Values["err"] = lipgloss.NewStyle().Bold(true)
+	styles.Keys["hint"] = lipgloss.NewStyle().Foreground(lipgloss.Color("204"))
+	styles.Values["hint"] = lipgloss.NewStyle().Bold(true)
 	styles.Keys["status"] = lipgloss.NewStyle().Foreground(lipgloss.Color("204"))
 	styles.Values["status"] = lipgloss.NewStyle().Bold(true)
 	styles.Keys["object"] = lipgloss.NewStyle().Foreground(lipgloss.Color("204"))
@@ -38,6 +93,7 @@ func init() {
 	styles.Values["ready"] = lipgloss.NewStyle().Bold(true)
 	Logger = log.New(os.Stderr)
 	Logger.SetStyles(styles)
+	Logger.SetLevel(log.DebugLevel)
 }
 
 func errHandle(err error) {
@@ -50,12 +106,7 @@ func runCmd(command string) (string, error) {
 	cmd := exec.Command("bash", "-c", command)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		_, err2 := errColor.Printf("[ EXEC ERROR ] >> error executing <%v>\n", command)
-		if err2 != nil {
-			os.Exit(1)
-		}
-		fmt.Printf(string(output))
-		return string(output), err
+		Logger.Fatal("Exit", "critical", err)
 	}
 	return string(output), nil
 }
@@ -181,16 +232,21 @@ func ListNameSpaces(coreClient kubernetes.Interface) (*v1.NamespaceList, []strin
 	return namespaces, namespacesName, nil
 }
 
-func troubleShootExternalSecret(cr CustomResource, kubeClient dynamic.Interface, namespace string) {
-	var externalSecret = schema.GroupVersionResource{Group: cr.group, Version: cr.version, Resource: cr.kind}
-	externalSecrets, err := kubeClient.Resource(externalSecret).Namespace(namespace).List(context.Background(), metav1.ListOptions{})
+func getCRList(cr CustomResource, kubeClient dynamic.Interface, namespace string) ([][]string, []map[string]string) {
+	var customResource = schema.GroupVersionResource{Group: cr.group, Version: cr.version, Resource: cr.kind}
+	customResources, err := kubeClient.Resource(customResource).Namespace(namespace).List(context.Background(), metav1.ListOptions{})
+	if customResources == nil || len(customResources.Items) == 0 {
+		Logger.Info("No CustomResource found", "kind", cr.prettyName)
+		return nil, nil
+	}
 	errHandle(err)
 
-	problematicExternalSecrets := make([]map[string]string, 0)
+	CRList := make([][]string, 0)
+	CRListIssue := make([]map[string]string, 0)
 
-	for _, es := range externalSecrets.Items {
+	for _, custom := range customResources.Items {
 
-		statusMap, foundStatus, err := unstructured.NestedMap(es.Object, "status")
+		statusMap, foundStatus, err := unstructured.NestedMap(custom.Object, "status")
 		errHandle(err)
 
 		if foundStatus {
@@ -198,49 +254,92 @@ func troubleShootExternalSecret(cr CustomResource, kubeClient dynamic.Interface,
 			errHandle(err)
 
 			if foundConditions {
-				for _, condition := range conditions {
+				var latestCondition map[string]interface{}
+				latestTime := time.Time{}
+				latestIndex := -1
+
+				for i, condition := range conditions {
 					conditionMap, ok := condition.(map[string]interface{})
 					if !ok {
-						fmt.Println("Erreur: le type de la condition n'est pas une carte.")
-						continue
+						Logger.Fatal("condition is not a Map object", "object", custom.Object)
 					}
+					transitionTimeStr, _ := conditionMap["lastTransitionTime"].(string)
+					transitionTime, err := time.Parse(time.RFC3339, transitionTimeStr)
+					errHandle(err)
 
-					reason, _ := conditionMap["reason"].(string)
-					status, _ := conditionMap["status"].(string)
-					cType, _ := conditionMap["type"].(string)
+					if transitionTime.After(latestTime) || (transitionTime.Equal(latestTime) && i > latestIndex) {
+						latestTime = transitionTime
+						latestCondition = conditionMap
+						latestIndex = i
+					}
+				}
+				if latestCondition != nil {
+					reason := latestCondition["reason"].(string)
+					status := latestCondition["status"].(string)
+					message := latestCondition["message"].(string)
 
-					fmt.Printf("externalSecret  %s >> Reason: %s, Status: %s, Type: %s\n", es.Object["metadata"].(map[string]interface{})["name"], reason, status, cType)
+					row := []string{
+						custom.Object["metadata"].(map[string]interface{})["name"].(string),
+						reason,
+						status,
+						message,
+					}
+					CRList = append(CRList, row)
 
-					if reason != "SecretSynced" {
-						problematicExternalSecrets = append(problematicExternalSecrets, map[string]string{
-							"Name":   es.Object["metadata"].(map[string]interface{})["name"].(string),
-							"Status": reason,
-							"Ready":  status,
+					if reason != cr.successCondition {
+						CRListIssue = append(CRListIssue, map[string]string{
+							"Name":    custom.Object["metadata"].(map[string]interface{})["name"].(string),
+							"Status":  reason,
+							"Ready":   status,
+							"Message": message,
 						})
 					}
 				}
 			} else {
-				fmt.Println("Pas de champ 'conditions' trouvé dans le champ 'status'.")
+				Logger.Fatal("No sub-entry 'conditions' found in entry 'status'", "object", custom.Object)
 			}
 		} else {
-			fmt.Println("Pas de champ 'status' trouvé.")
+			Logger.Fatal("No entry 'status' found", "object", custom.Object)
 		}
 	}
-	if len(problematicExternalSecrets) > 0 {
-		Logger.Error("ERROR DETECTED")
-		for _, es := range problematicExternalSecrets {
-			Logger.Error("ExternalSecret", "object", es["Name"], "status", es["Status"], "ready", es["Ready"])
-		}
-	} else {
-		fmt.Println("No issues found with externalSecrets")
-	}
-
+	return CRList, CRListIssue
 }
 
-type CustomResource struct {
-	group   string
-	version string
-	kind    string
+func displayCRIssue(CRListIssue []map[string]string, cr CustomResource) {
+	if len(CRListIssue) > 0 {
+		Logger.Error("ISSUE DETECTED", "object", cr.prettyName)
+		for _, pb := range CRListIssue {
+			Logger.Error("Unsynced/NotReady", "kind", cr.prettyName, "name", pb["Name"], "status", pb["Status"], "ready", pb["Ready"], "hint", pb["Message"])
+		}
+	} else {
+		Logger.Info("All CustomResources are healthy", "kind", cr.prettyName)
+	}
+}
+
+func createObjectArray(ObjectList [][]string) {
+	t := table.New().Border(lipgloss.ThickBorder()).BorderStyle(BorderStyle).StyleFunc(func(row, col int) lipgloss.Style {
+		var style lipgloss.Style
+
+		switch {
+		case row == 0:
+			return HeaderStyle
+		default:
+			style = OddRowStyle
+		}
+
+		if col == 0 {
+			style = style.Copy().Width(30)
+		}
+		if col == 1 {
+			style = style.Copy().Width(25)
+		}
+		if col == 3 {
+			style = style.Copy().Width(90)
+		}
+
+		return style
+	}).Headers("NAME", "STATUS", "READY", "MESSAGE").Rows(ObjectList...)
+	fmt.Println(t)
 }
 
 func main() {
@@ -273,12 +372,13 @@ func main() {
 
 	kubeDynamicClient, err := createDynamicClient(kubeConfigPath)
 
-	// Spécifier le groupe, la version et le plural de la ressource personnalisée
-	var cr CustomResource
-	cr.group = "external-secrets.io"
-	cr.version = "v1beta1"
-	cr.kind = "externalsecrets"
-
-	troubleShootExternalSecret(cr, kubeDynamicClient, nsChoice)
+	ESList, ESListIssue := getCRList(Es, kubeDynamicClient, nsChoice)
+	Logger.Debug("Listing customResource", "kind", Es.prettyName, "namespace", nsChoice)
+	createObjectArray(ESList)
+	displayCRIssue(ESListIssue, Es)
+	KSList, KSListIssue := getCRList(Ks, kubeDynamicClient, nsChoice)
+	Logger.Debug("Listing customResource", "kind", Ks.prettyName, "namespace", nsChoice)
+	createObjectArray(KSList)
+	displayCRIssue(KSListIssue, Ks)
 
 }
