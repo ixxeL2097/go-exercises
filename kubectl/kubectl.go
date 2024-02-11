@@ -9,17 +9,15 @@ import (
 	"github.com/charmbracelet/log"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/clientcmd/api"
+	"kubectl/customresource"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"time"
 )
 
 const (
@@ -28,13 +26,26 @@ const (
 	lightGray = lipgloss.Color("241")
 )
 
-type CustomResource struct {
-	group            string
-	version          string
-	kind             string
-	successCondition string
-	prettyName       string
-}
+//type CustomResourceDefinition interface {
+//	getCRList(kubeClient dynamic.Interface, namespace string) ([][]string, []map[string]string)
+//	NewCR() CustomResourceDefinition
+//}
+//
+//type CustomResource struct {
+//	group            string
+//	version          string
+//	kind             string
+//	successCondition string
+//	prettyName       string
+//}
+//
+//type ExternalSecret struct {
+//	CustomResource
+//}
+//
+//type Kustomization struct {
+//	CustomResource
+//}
 
 var (
 	re = lipgloss.NewRenderer(os.Stdout)
@@ -50,27 +61,9 @@ var (
 	BorderStyle = lipgloss.NewStyle().Foreground(purple)
 	// Logger for output
 	Logger *log.Logger
-	Es     = CustomResource{
-		group:            "external-secrets.io",
-		version:          "v1beta1",
-		kind:             "externalsecrets",
-		successCondition: "SecretSynced",
-		prettyName:       "ExternalSecret",
-	}
-	Ks = CustomResource{
-		group:            "kustomize.toolkit.fluxcd.io",
-		version:          "v1",
-		kind:             "kustomizations",
-		successCondition: "SecretSynced",
-		prettyName:       "Kustomization",
-	}
-	GitRepo = CustomResource{
-		group:            "source.toolkit.fluxcd.io",
-		version:          "v1",
-		kind:             "gitrepository",
-		successCondition: "SecretSynced",
-		prettyName:       "GitRepository",
-	}
+
+	//Es = (&customresource.ExternalSecret{}).NewCR().(*customresource.ExternalSecret)
+	//Ks = (&customresource.Kustomization{}).NewCR().(*customresource.Kustomization)
 )
 
 func init() {
@@ -232,90 +225,6 @@ func ListNameSpaces(coreClient kubernetes.Interface) (*v1.NamespaceList, []strin
 	return namespaces, namespacesName, nil
 }
 
-func getCRList(cr CustomResource, kubeClient dynamic.Interface, namespace string) ([][]string, []map[string]string) {
-	var customResource = schema.GroupVersionResource{Group: cr.group, Version: cr.version, Resource: cr.kind}
-	customResources, err := kubeClient.Resource(customResource).Namespace(namespace).List(context.Background(), metav1.ListOptions{})
-	if customResources == nil || len(customResources.Items) == 0 {
-		Logger.Info("No CustomResource found", "kind", cr.prettyName)
-		return nil, nil
-	}
-	errHandle(err)
-
-	CRList := make([][]string, 0)
-	CRListIssue := make([]map[string]string, 0)
-
-	for _, custom := range customResources.Items {
-
-		statusMap, foundStatus, err := unstructured.NestedMap(custom.Object, "status")
-		errHandle(err)
-
-		if foundStatus {
-			conditions, foundConditions, err := unstructured.NestedSlice(statusMap, "conditions")
-			errHandle(err)
-
-			if foundConditions {
-				var latestCondition map[string]interface{}
-				latestTime := time.Time{}
-				latestIndex := -1
-
-				for i, condition := range conditions {
-					conditionMap, ok := condition.(map[string]interface{})
-					if !ok {
-						Logger.Fatal("condition is not a Map object", "object", custom.Object)
-					}
-					transitionTimeStr, _ := conditionMap["lastTransitionTime"].(string)
-					transitionTime, err := time.Parse(time.RFC3339, transitionTimeStr)
-					errHandle(err)
-
-					if transitionTime.After(latestTime) || (transitionTime.Equal(latestTime) && i > latestIndex) {
-						latestTime = transitionTime
-						latestCondition = conditionMap
-						latestIndex = i
-					}
-				}
-				if latestCondition != nil {
-					reason := latestCondition["reason"].(string)
-					status := latestCondition["status"].(string)
-					message := latestCondition["message"].(string)
-
-					row := []string{
-						custom.Object["metadata"].(map[string]interface{})["name"].(string),
-						reason,
-						status,
-						message,
-					}
-					CRList = append(CRList, row)
-
-					if reason != cr.successCondition {
-						CRListIssue = append(CRListIssue, map[string]string{
-							"Name":    custom.Object["metadata"].(map[string]interface{})["name"].(string),
-							"Status":  reason,
-							"Ready":   status,
-							"Message": message,
-						})
-					}
-				}
-			} else {
-				Logger.Fatal("No sub-entry 'conditions' found in entry 'status'", "object", custom.Object)
-			}
-		} else {
-			Logger.Fatal("No entry 'status' found", "object", custom.Object)
-		}
-	}
-	return CRList, CRListIssue
-}
-
-func displayCRIssue(CRListIssue []map[string]string, cr CustomResource) {
-	if len(CRListIssue) > 0 {
-		Logger.Error("ISSUE DETECTED", "object", cr.prettyName)
-		for _, pb := range CRListIssue {
-			Logger.Error("Unsynced/NotReady", "kind", cr.prettyName, "name", pb["Name"], "status", pb["Status"], "ready", pb["Ready"], "hint", pb["Message"])
-		}
-	} else {
-		Logger.Info("All CustomResources are healthy", "kind", cr.prettyName)
-	}
-}
-
 func createObjectArray(ObjectList [][]string) {
 	t := table.New().Border(lipgloss.ThickBorder()).BorderStyle(BorderStyle).StyleFunc(func(row, col int) lipgloss.Style {
 		var style lipgloss.Style
@@ -372,13 +281,16 @@ func main() {
 
 	kubeDynamicClient, err := createDynamicClient(kubeConfigPath)
 
-	ESList, ESListIssue := getCRList(Es, kubeDynamicClient, nsChoice)
-	Logger.Debug("Listing customResource", "kind", Es.prettyName, "namespace", nsChoice)
+	Es := (&customresource.ExternalSecret{}).NewCR().(*customresource.ExternalSecret)
+	Ks := (&customresource.Kustomization{}).NewCR().(*customresource.Kustomization)
+
+	ESList, ESListIssue := Es.GetCRList(kubeDynamicClient, nsChoice)
+	Logger.Debug("Listing customResource", "kind", Es.PrettyName, "namespace", nsChoice)
 	createObjectArray(ESList)
-	displayCRIssue(ESListIssue, Es)
-	KSList, KSListIssue := getCRList(Ks, kubeDynamicClient, nsChoice)
-	Logger.Debug("Listing customResource", "kind", Ks.prettyName, "namespace", nsChoice)
+	Es.DisplayCRIssue(ESListIssue)
+	KSList, KSListIssue := Ks.GetCRList(kubeDynamicClient, nsChoice)
+	Logger.Debug("Listing customResource", "kind", Ks.PrettyName, "namespace", nsChoice)
 	createObjectArray(KSList)
-	displayCRIssue(KSListIssue, Ks)
+	Ks.DisplayCRIssue(KSListIssue)
 
 }
