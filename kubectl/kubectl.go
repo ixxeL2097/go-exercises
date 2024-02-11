@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"github.com/charmbracelet/huh"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/lipgloss/table"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/dynamic"
@@ -13,31 +11,12 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/clientcmd/api"
+	"kubectl/charm"
 	"kubectl/customresource"
 	"kubectl/logger"
 	"os"
 	"os/exec"
 	"path/filepath"
-)
-
-const (
-	purple    = lipgloss.Color("99")
-	gray      = lipgloss.Color("245")
-	lightGray = lipgloss.Color("241")
-)
-
-var (
-	re = lipgloss.NewRenderer(os.Stdout)
-	// HeaderStyle is the lipgloss style used for the table headers.
-	HeaderStyle = re.NewStyle().Foreground(purple).Bold(true).Align(lipgloss.Center)
-	// CellStyle is the base lipgloss style used for the table rows.
-	CellStyle = re.NewStyle().Padding(0, 1).Width(14)
-	// OddRowStyle is the lipgloss style used for odd-numbered table rows.
-	OddRowStyle = CellStyle.Copy().Foreground(gray)
-	// EvenRowStyle is the lipgloss style used for even-numbered table rows.
-	EvenRowStyle = CellStyle.Copy().Foreground(lightGray)
-	// BorderStyle is the lipgloss style used for the table border.
-	BorderStyle = lipgloss.NewStyle().Foreground(purple)
 )
 
 func runCmd(command string) (string, error) {
@@ -47,23 +26,6 @@ func runCmd(command string) (string, error) {
 		logger.Logger.Fatal("Exit", "critical", err)
 	}
 	return string(output), nil
-}
-
-func createOptionsFromStrings(strings []string) []huh.Option[string] {
-	var options []huh.Option[string]
-	for _, str := range strings {
-		options = append(options, huh.NewOption(string(str), string(str)))
-	}
-	return options
-}
-
-func getForm[T comparable](selects ...*huh.Select[T]) *huh.Form {
-	var fields []huh.Field
-	for _, sel := range selects {
-		fields = append(fields, sel)
-	}
-	group := huh.NewGroup(fields...)
-	return huh.NewForm(group)
 }
 
 func getKubeConfigPath() string {
@@ -170,32 +132,6 @@ func ListNameSpaces(coreClient kubernetes.Interface) (*v1.NamespaceList, []strin
 	return namespaces, namespacesName, nil
 }
 
-func createObjectArray(ObjectList [][]string) {
-	t := table.New().Border(lipgloss.ThickBorder()).BorderStyle(BorderStyle).StyleFunc(func(row, col int) lipgloss.Style {
-		var style lipgloss.Style
-
-		switch {
-		case row == 0:
-			return HeaderStyle
-		default:
-			style = OddRowStyle
-		}
-
-		if col == 0 {
-			style = style.Copy().Width(30)
-		}
-		if col == 1 {
-			style = style.Copy().Width(25)
-		}
-		if col == 3 {
-			style = style.Copy().Width(90)
-		}
-
-		return style
-	}).Headers("NAME", "STATUS", "READY", "MESSAGE").Rows(ObjectList...)
-	fmt.Println(t)
-}
-
 func main() {
 
 	kubeConfigPath := getKubeConfigPath()
@@ -203,8 +139,8 @@ func main() {
 	kubeContextsList := getKubeContexts(config)
 
 	var ctxChoice string
-	contextChoiceForm := getForm(
-		huh.NewSelect[string]().Title("Kubernetes Context").Description("Please choose a context to operate in").Options(createOptionsFromStrings(kubeContextsList)...).Value(&ctxChoice),
+	contextChoiceForm := charm.GetForm(
+		huh.NewSelect[string]().Title("Kubernetes Context").Description("Please choose a context to operate in").Options(charm.CreateOptionsFromStrings(kubeContextsList)...).Value(&ctxChoice),
 	)
 	err := contextChoiceForm.Run()
 	logger.ErrHandle(err)
@@ -215,8 +151,8 @@ func main() {
 	_, nsName, err := ListNameSpaces(kubeClient)
 
 	var nsChoice string
-	nsChoiceForm := getForm(
-		huh.NewSelect[string]().Title("Kubernetes Namespace").Description("Please choose a namespace to operate in").Options(createOptionsFromStrings(nsName)...).Value(&nsChoice),
+	nsChoiceForm := charm.GetForm(
+		huh.NewSelect[string]().Title("Kubernetes Namespace").Description("Please choose a namespace to operate in").Options(charm.CreateOptionsFromStrings(nsName)...).Value(&nsChoice),
 	)
 	err = nsChoiceForm.Run()
 	logger.ErrHandle(err)
@@ -231,11 +167,11 @@ func main() {
 
 	ESList, ESListIssue := Es.GetCRList(kubeDynamicClient, nsChoice)
 	logger.Logger.Debug("Listing customResource", "kind", Es.PrettyName, "namespace", nsChoice)
-	createObjectArray(ESList)
+	charm.CreateObjectArray(ESList)
 	Es.DisplayCRIssue(ESListIssue)
 	KSList, KSListIssue := Ks.GetCRList(kubeDynamicClient, nsChoice)
 	logger.Logger.Debug("Listing customResource", "kind", Ks.PrettyName, "namespace", nsChoice)
-	createObjectArray(KSList)
+	charm.CreateObjectArray(KSList)
 	Ks.DisplayCRIssue(KSListIssue)
 
 }
