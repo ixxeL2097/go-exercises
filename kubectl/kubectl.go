@@ -6,7 +6,6 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/lipgloss/table"
-	"github.com/charmbracelet/log"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/dynamic"
@@ -15,6 +14,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/clientcmd/api"
 	"kubectl/customresource"
+	"kubectl/logger"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,27 +25,6 @@ const (
 	gray      = lipgloss.Color("245")
 	lightGray = lipgloss.Color("241")
 )
-
-//type CustomResourceDefinition interface {
-//	getCRList(kubeClient dynamic.Interface, namespace string) ([][]string, []map[string]string)
-//	NewCR() CustomResourceDefinition
-//}
-//
-//type CustomResource struct {
-//	group            string
-//	version          string
-//	kind             string
-//	successCondition string
-//	prettyName       string
-//}
-//
-//type ExternalSecret struct {
-//	CustomResource
-//}
-//
-//type Kustomization struct {
-//	CustomResource
-//}
 
 var (
 	re = lipgloss.NewRenderer(os.Stdout)
@@ -59,47 +38,13 @@ var (
 	EvenRowStyle = CellStyle.Copy().Foreground(lightGray)
 	// BorderStyle is the lipgloss style used for the table border.
 	BorderStyle = lipgloss.NewStyle().Foreground(purple)
-	// Logger for output
-	Logger *log.Logger
-
-	//Es = (&customresource.ExternalSecret{}).NewCR().(*customresource.ExternalSecret)
-	//Ks = (&customresource.Kustomization{}).NewCR().(*customresource.Kustomization)
 )
-
-func init() {
-	styles := log.DefaultStyles()
-	styles.Levels[log.FatalLevel] = lipgloss.NewStyle().SetString("FATAL!!").Padding(0, 1, 0, 1).Background(lipgloss.AdaptiveColor{Light: "#9966CC", Dark: "#9966CC"}).Foreground(lipgloss.Color("0")).Bold(true)
-	styles.Levels[log.ErrorLevel] = lipgloss.NewStyle().SetString("ERROR!!").Padding(0, 1, 0, 1).Background(lipgloss.AdaptiveColor{Light: "203", Dark: "203"}).Foreground(lipgloss.Color("0")).Bold(true)
-	styles.Levels[log.InfoLevel] = lipgloss.NewStyle().SetString("INFO >>").Padding(0, 1, 0, 1).Background(lipgloss.AdaptiveColor{Light: "45", Dark: "45"}).Foreground(lipgloss.Color("0")).Bold(true)
-	styles.Levels[log.DebugLevel] = lipgloss.NewStyle().SetString("DEBUG ::").Padding(0, 1, 0, 1).Background(lipgloss.AdaptiveColor{Light: "75", Dark: "75"}).Foreground(lipgloss.Color("0")).Bold(true)
-	styles.Keys["critical"] = lipgloss.NewStyle().Foreground(lipgloss.Color("#9966CC"))
-	styles.Values["critical"] = lipgloss.NewStyle().Bold(true)
-	styles.Keys["err"] = lipgloss.NewStyle().Foreground(lipgloss.Color("204"))
-	styles.Values["err"] = lipgloss.NewStyle().Bold(true)
-	styles.Keys["hint"] = lipgloss.NewStyle().Foreground(lipgloss.Color("204"))
-	styles.Values["hint"] = lipgloss.NewStyle().Bold(true)
-	styles.Keys["status"] = lipgloss.NewStyle().Foreground(lipgloss.Color("204"))
-	styles.Values["status"] = lipgloss.NewStyle().Bold(true)
-	styles.Keys["object"] = lipgloss.NewStyle().Foreground(lipgloss.Color("204"))
-	styles.Values["object"] = lipgloss.NewStyle().Bold(true)
-	styles.Keys["ready"] = lipgloss.NewStyle().Foreground(lipgloss.Color("204"))
-	styles.Values["ready"] = lipgloss.NewStyle().Bold(true)
-	Logger = log.New(os.Stderr)
-	Logger.SetStyles(styles)
-	Logger.SetLevel(log.DebugLevel)
-}
-
-func errHandle(err error) {
-	if err != nil {
-		Logger.Fatal("Exit", "critical", err)
-	}
-}
 
 func runCmd(command string) (string, error) {
 	cmd := exec.Command("bash", "-c", command)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		Logger.Fatal("Exit", "critical", err)
+		logger.Logger.Fatal("Exit", "critical", err)
 	}
 	return string(output), nil
 }
@@ -123,7 +68,7 @@ func getForm[T comparable](selects ...*huh.Select[T]) *huh.Form {
 
 func getKubeConfigPath() string {
 	userHomeDir, err := os.UserHomeDir()
-	errHandle(err)
+	logger.ErrHandle(err)
 
 	kubeConfigPath := filepath.Join(userHomeDir, ".kube", "config")
 	return kubeConfigPath
@@ -131,7 +76,7 @@ func getKubeConfigPath() string {
 
 func getKubeConfigFromFile(kubeConfigPath string) *api.Config {
 	config, err := clientcmd.LoadFromFile(kubeConfigPath)
-	errHandle(err)
+	logger.ErrHandle(err)
 	return config
 }
 
@@ -146,13 +91,13 @@ func getKubeContexts(config *api.Config) []string {
 func switchKubeContext(context string, kubeConfigPath string, config *api.Config) {
 	config.CurrentContext = context
 	err := clientcmd.WriteToFile(*config, kubeConfigPath)
-	errHandle(err)
+	logger.ErrHandle(err)
 }
 
 func switchKubeContextNamespace(context string, kubeConfigPath string, namespace string, config *api.Config) {
 	config.Contexts[context].Namespace = namespace
 	err := clientcmd.WriteToFile(*config, kubeConfigPath)
-	errHandle(err)
+	logger.ErrHandle(err)
 }
 
 func createClient(kubeConfigPath string) (kubernetes.Interface, error) {
@@ -262,7 +207,7 @@ func main() {
 		huh.NewSelect[string]().Title("Kubernetes Context").Description("Please choose a context to operate in").Options(createOptionsFromStrings(kubeContextsList)...).Value(&ctxChoice),
 	)
 	err := contextChoiceForm.Run()
-	errHandle(err)
+	logger.ErrHandle(err)
 
 	switchKubeContext(ctxChoice, kubeConfigPath, config)
 
@@ -274,7 +219,7 @@ func main() {
 		huh.NewSelect[string]().Title("Kubernetes Namespace").Description("Please choose a namespace to operate in").Options(createOptionsFromStrings(nsName)...).Value(&nsChoice),
 	)
 	err = nsChoiceForm.Run()
-	errHandle(err)
+	logger.ErrHandle(err)
 	nsChoiceForm.View()
 
 	switchKubeContextNamespace(ctxChoice, kubeConfigPath, nsChoice, config)
@@ -285,11 +230,11 @@ func main() {
 	Ks := (&customresource.Kustomization{}).NewCR().(*customresource.Kustomization)
 
 	ESList, ESListIssue := Es.GetCRList(kubeDynamicClient, nsChoice)
-	Logger.Debug("Listing customResource", "kind", Es.PrettyName, "namespace", nsChoice)
+	logger.Logger.Debug("Listing customResource", "kind", Es.PrettyName, "namespace", nsChoice)
 	createObjectArray(ESList)
 	Es.DisplayCRIssue(ESListIssue)
 	KSList, KSListIssue := Ks.GetCRList(kubeDynamicClient, nsChoice)
-	Logger.Debug("Listing customResource", "kind", Ks.PrettyName, "namespace", nsChoice)
+	logger.Logger.Debug("Listing customResource", "kind", Ks.PrettyName, "namespace", nsChoice)
 	createObjectArray(KSList)
 	Ks.DisplayCRIssue(KSListIssue)
 
