@@ -13,17 +13,64 @@ import (
 )
 
 type CustomResourceDefinition interface {
+	setGroup(group string)
+	getGroup() string
+	setVersion(version string)
+	getVersion() string
+	setKind(kind string)
+	getKind() string
+	setSuccessCondition(successCondition string)
+	getSuccessCondition() string
+	setPrettyName(prettyName string)
+	getPrettyName() string
 	GetCRList(kubeClient dynamic.Interface, namespace string) ([][]string, []map[string]string)
 	DisplayCRIssue(CRListIssue []map[string]string)
-	NewCR(group string, kind string, successCondition string, version string, prettyName string) CustomResourceDefinition
+	AnalyzeCRStatus(kubeClient dynamic.Interface, namespace string)
 }
 
 type CustomResource struct {
-	Group            string
-	Version          string
-	Kind             string
-	SuccessCondition string
-	PrettyName       string
+	group            string
+	version          string
+	kind             string
+	successCondition string
+	prettyName       string
+}
+
+func (cr *CustomResource) setGroup(group string) {
+	cr.group = group
+}
+
+func (cr *CustomResource) getGroup() string {
+	return cr.group
+}
+
+func (cr *CustomResource) setVersion(version string) {
+	cr.version = version
+}
+
+func (cr *CustomResource) getVersion() string {
+	return cr.version
+}
+func (cr *CustomResource) setKind(kind string) {
+	cr.kind = kind
+}
+
+func (cr *CustomResource) getKind() string {
+	return cr.kind
+}
+func (cr *CustomResource) setSuccessCondition(successCondition string) {
+	cr.successCondition = successCondition
+}
+
+func (cr *CustomResource) getSuccessCondition() string {
+	return cr.successCondition
+}
+func (cr *CustomResource) setPrettyName(prettyName string) {
+	cr.prettyName = prettyName
+}
+
+func (cr *CustomResource) getPrettyName() string {
+	return cr.prettyName
 }
 
 type ExternalSecret struct {
@@ -46,147 +93,137 @@ type HelmRepository struct {
 	CustomResource
 }
 
-func (e *ExternalSecret) NewCR(group string, kind string, successCondition string, version string, prettyName string) CustomResourceDefinition {
+func GetCRD(crdType string, group string, kind string, version string) CustomResourceDefinition {
+	if crdType == "externalsecret" {
+		return NewEs(group, kind, version)
+	}
+	if crdType == "kustomization" {
+		return NewKs(group, kind, version)
+	}
+	if crdType == "gitrepository" {
+		return NewGr(group, kind, version)
+	}
+	if crdType == "helmrelease" {
+		return NewHr(group, kind, version)
+	}
+	if crdType == "helmrepository" {
+		return NewHc(group, kind, version)
+	}
+	logger.ErrHandle(fmt.Errorf("Wrong CRD type passed : %v", crdType))
+	return nil
+}
+
+func NewEs(group string, kind string, version string) CustomResourceDefinition {
 	if group == "" {
 		group = "external-secrets.io"
 	}
 	if kind == "" {
 		kind = "externalsecrets"
 	}
-	if successCondition == "" {
-		successCondition = "SecretSynced"
-	}
 	if version == "" {
 		version = "v1beta1"
 	}
-	if prettyName == "" {
-		prettyName = "ExternalSecret"
-	}
 	return &ExternalSecret{
 		CustomResource: CustomResource{
-			Group:            group,
-			Version:          version,
-			Kind:             kind,
-			SuccessCondition: successCondition,
-			PrettyName:       prettyName,
+			group:            group,
+			kind:             kind,
+			version:          version,
+			successCondition: "SecretSynced",
+			prettyName:       "ExternalSecret",
 		},
 	}
 }
 
-func (e *Kustomization) NewCR(group string, kind string, successCondition string, version string, prettyName string) CustomResourceDefinition {
+func NewKs(group string, kind string, version string) CustomResourceDefinition {
 	if group == "" {
 		group = "kustomize.toolkit.fluxcd.io"
 	}
 	if kind == "" {
 		kind = "kustomizations"
 	}
-	if successCondition == "" {
-		successCondition = "ReconciliationSucceeded"
-	}
 	if version == "" {
 		version = "v1"
 	}
-	if prettyName == "" {
-		prettyName = "Kustomization"
-	}
 	return &Kustomization{
 		CustomResource: CustomResource{
-			Group:            group,
-			Version:          version,
-			Kind:             kind,
-			SuccessCondition: successCondition,
-			PrettyName:       prettyName,
+			group:            group,
+			kind:             kind,
+			version:          version,
+			successCondition: "ReconciliationSucceeded",
+			prettyName:       "Kustomization",
 		},
 	}
 }
 
-func (e *GitRepository) NewCR(group string, kind string, successCondition string, version string, prettyName string) CustomResourceDefinition {
+func NewGr(group string, kind string, version string) CustomResourceDefinition {
 	if group == "" {
 		group = "source.toolkit.fluxcd.io"
 	}
 	if kind == "" {
 		kind = "gitrepositories"
 	}
-	if successCondition == "" {
-		successCondition = "Succeeded"
-	}
 	if version == "" {
 		version = "v1"
 	}
-	if prettyName == "" {
-		prettyName = "GitRepository"
-	}
 	return &GitRepository{
 		CustomResource: CustomResource{
-			Group:            group,
-			Version:          version,
-			Kind:             kind,
-			SuccessCondition: successCondition,
-			PrettyName:       prettyName,
+			group:            group,
+			kind:             kind,
+			version:          version,
+			successCondition: "Succeeded",
+			prettyName:       "GitRepository",
 		},
 	}
 }
 
-func (e *HelmRelease) NewCR(group string, kind string, successCondition string, version string, prettyName string) CustomResourceDefinition {
+func NewHr(group string, kind string, version string) CustomResourceDefinition {
 	if group == "" {
 		group = "helm.toolkit.fluxcd.io"
 	}
 	if kind == "" {
 		kind = "helmreleases"
 	}
-	if successCondition == "" {
-		successCondition = "ReconciliationSucceeded"
-	}
 	if version == "" {
 		version = "v2beta1"
 	}
-	if prettyName == "" {
-		prettyName = "HelmRelease"
-	}
 	return &HelmRelease{
 		CustomResource: CustomResource{
-			Group:            group,
-			Version:          version,
-			Kind:             kind,
-			SuccessCondition: successCondition,
-			PrettyName:       prettyName,
+			group:            group,
+			kind:             kind,
+			version:          version,
+			successCondition: "ReconciliationSucceeded",
+			prettyName:       "HelmRelease",
 		},
 	}
 }
 
-func (e *HelmRepository) NewCR(group string, kind string, successCondition string, version string, prettyName string) CustomResourceDefinition {
+func NewHc(group string, kind string, version string) CustomResourceDefinition {
 	if group == "" {
 		group = "source.toolkit.fluxcd.io"
 	}
 	if kind == "" {
 		kind = "helmrepositories"
 	}
-	if successCondition == "" {
-		successCondition = "Succeeded"
-	}
 	if version == "" {
 		version = "v2beta1"
 	}
-	if prettyName == "" {
-		prettyName = "HelmRepository"
-	}
 	return &HelmRepository{
 		CustomResource: CustomResource{
-			Group:            group,
-			Version:          version,
-			Kind:             kind,
-			SuccessCondition: successCondition,
-			PrettyName:       prettyName,
+			group:            group,
+			kind:             kind,
+			version:          version,
+			successCondition: "Succeeded",
+			prettyName:       "HelmRepository",
 		},
 	}
 }
 
 func (cr *CustomResource) GetCRList(kubeClient dynamic.Interface, namespace string) ([][]string, []map[string]string) {
-	logger.Logger.Debug("Looking for customResource", "kind", cr.PrettyName, "namespace", namespace)
-	var customResource = schema.GroupVersionResource{Group: cr.Group, Version: cr.Version, Resource: cr.Kind}
+	logger.Logger.Debug("Looking for customResource", "kind", cr.getPrettyName(), "namespace", namespace)
+	var customResource = schema.GroupVersionResource{Group: cr.getGroup(), Version: cr.getVersion(), Resource: cr.getKind()}
 	customResources, err := kubeClient.Resource(customResource).Namespace(namespace).List(context.Background(), metav1.ListOptions{})
 	if customResources == nil || len(customResources.Items) == 0 {
-		logger.Logger.Info("No CustomResource found", "kind", cr.PrettyName, "namespace", namespace)
+		logger.Logger.Info("No CustomResource found", "kind", cr.getPrettyName(), "namespace", namespace)
 		return nil, nil
 	}
 	logger.ErrHandle(err)
@@ -236,7 +273,7 @@ func (cr *CustomResource) GetCRList(kubeClient dynamic.Interface, namespace stri
 					}
 					CRList = append(CRList, row)
 
-					if reason != cr.SuccessCondition {
+					if reason != cr.getSuccessCondition() {
 						CRListIssue = append(CRListIssue, map[string]string{
 							"Name":    custom.Object["metadata"].(map[string]interface{})["name"].(string),
 							"Status":  reason,
@@ -257,13 +294,13 @@ func (cr *CustomResource) GetCRList(kubeClient dynamic.Interface, namespace stri
 
 func (cr *CustomResource) DisplayCRIssue(CRListIssue []map[string]string) {
 	if len(CRListIssue) > 0 {
-		logger.Logger.Error("ISSUE DETECTED", "object", cr.PrettyName)
+		logger.Logger.Error("ISSUE DETECTED", "object", cr.getPrettyName())
 		for _, pb := range CRListIssue {
-			logger.Logger.Error("Unsynced/NotReady", "kind", cr.PrettyName, "name", pb["Name"], "status", pb["Status"], "ready", pb["Ready"], "hint", pb["Message"])
+			logger.Logger.Error("Unsynced/NotReady", "kind", cr.getPrettyName(), "name", pb["Name"], "status", pb["Status"], "ready", pb["Ready"], "hint", pb["Message"])
 			fmt.Println("")
 		}
 	} else {
-		logger.Logger.Info("All CustomResources are healthy", "kind", cr.PrettyName)
+		logger.Logger.Info("All CustomResources are healthy", "kind", cr.getPrettyName())
 		fmt.Println("")
 	}
 }
@@ -271,7 +308,7 @@ func (cr *CustomResource) DisplayCRIssue(CRListIssue []map[string]string) {
 func (cr *CustomResource) AnalyzeCRStatus(kubeClient dynamic.Interface, namespace string) {
 	CRList, CRListIssue := cr.GetCRList(kubeClient, namespace)
 	if CRList != nil {
-		logger.Logger.Debug("Listing customResource", "kind", cr.PrettyName, "namespace", namespace)
+		logger.Logger.Debug("Listing customResource", "kind", cr.getPrettyName(), "namespace", namespace)
 		charm.CreateObjectArray(CRList, make([]string, 0))
 		if CRListIssue != nil {
 			cr.DisplayCRIssue(CRListIssue)

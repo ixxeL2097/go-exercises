@@ -213,15 +213,15 @@ func main() {
 
 	kubeDynamicClient, err := createDynamicClient(kubeConfigPath)
 
-	Es := (&customresource.ExternalSecret{}).NewCR("", "", "", "", "").(*customresource.ExternalSecret)
-	Ks := (&customresource.Kustomization{}).NewCR("", "", "", "", "").(*customresource.Kustomization)
-	GitRepo := (&customresource.GitRepository{}).NewCR("", "", "", "", "").(*customresource.GitRepository)
-	Hc := (&customresource.HelmRepository{}).NewCR("", "", "", "", "").(*customresource.HelmRepository)
-	Hr := (&customresource.HelmRelease{}).NewCR("", "", "", "", "").(*customresource.HelmRelease)
+	Es := customresource.GetCRD("externalsecret", "", "", "")
+	Ks := customresource.GetCRD("kustomization", "", "", "")
+	Gr := customresource.GetCRD("gitrepository", "", "", "")
+	Hc := customresource.GetCRD("helmrepository", "", "", "")
+	Hr := customresource.GetCRD("helmrelease", "", "", "")
 
 	Es.AnalyzeCRStatus(kubeDynamicClient, nsChoice)
 	Ks.AnalyzeCRStatus(kubeDynamicClient, nsChoice)
-	GitRepo.AnalyzeCRStatus(kubeDynamicClient, nsChoice)
+	Gr.AnalyzeCRStatus(kubeDynamicClient, nsChoice)
 	Hc.AnalyzeCRStatus(kubeDynamicClient, nsChoice)
 	Hr.AnalyzeCRStatus(kubeDynamicClient, nsChoice)
 
