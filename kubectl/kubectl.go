@@ -23,6 +23,7 @@ func runCmd(command string) (string, error) {
 	cmd := exec.Command("bash", "-c", command)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
+
 		logger.Logger.Fatal("Exit", "critical", err)
 	}
 	return string(output), nil
@@ -106,8 +107,8 @@ func createDynamicClient(kubeConfigPath string) (dynamic.Interface, error) {
 	return dynamicClient, nil
 }
 
-func ListPods(namespace string, coreClient kubernetes.Interface) (*v1.PodList, []string, error) {
-	pods, err := coreClient.CoreV1().Pods(namespace).List(context.Background(), metav1.ListOptions{})
+func ListPods(namespace string, kubeClient kubernetes.Interface) (*v1.PodList, []string, error) {
+	pods, err := kubeClient.CoreV1().Pods(namespace).List(context.Background(), metav1.ListOptions{})
 	if err != nil {
 		err = fmt.Errorf("error getting pods: %v\n", err)
 		return nil, nil, err
@@ -119,8 +120,59 @@ func ListPods(namespace string, coreClient kubernetes.Interface) (*v1.PodList, [
 	return pods, podsName, nil
 }
 
-func ListNameSpaces(coreClient kubernetes.Interface) (*v1.NamespaceList, []string, error) {
-	namespaces, err := coreClient.CoreV1().Namespaces().List(context.Background(), metav1.ListOptions{})
+func GetPodList(kubeClient kubernetes.Interface, namespace string) ([][]string, []map[string]string, error) {
+	pods, err := kubeClient.CoreV1().Pods(namespace).List(context.Background(), metav1.ListOptions{})
+	logger.ErrHandle(err)
+
+	podList := make([][]string, 0)
+	podListIssue := make([]map[string]string, 0)
+
+	for _, pod := range pods.Items {
+		name := pod.Name
+		phase := string(pod.Status.Phase)
+		var ready string
+
+		for _, condition := range pod.Status.Conditions {
+			if condition.Type == v1.PodReady {
+				ready = string(condition.Status)
+			}
+		}
+
+		row := []string{
+			name,
+			phase,
+			ready,
+		}
+		podList = append(podList, row)
+
+		if podNotHealthy(&pod) {
+			podListIssue = append(podListIssue, map[string]string{
+				"Name":  name,
+				"Phase": phase,
+				"Ready": ready,
+			})
+		}
+	}
+	return podList, podListIssue, nil
+}
+
+func podNotHealthy(pod *v1.Pod) bool {
+	if pod.Status.Phase != v1.PodRunning && pod.Status.Phase != v1.PodSucceeded {
+		return true
+	}
+	if pod.Status.Phase == v1.PodSucceeded {
+		return false
+	}
+	for _, condition := range pod.Status.Conditions {
+		if condition.Type == v1.PodReady && condition.Status == v1.ConditionTrue {
+			return false
+		}
+	}
+	return true
+}
+
+func ListNameSpaces(kubeClient kubernetes.Interface) (*v1.NamespaceList, []string, error) {
+	namespaces, err := kubeClient.CoreV1().Namespaces().List(context.Background(), metav1.ListOptions{})
 	if err != nil {
 		err = fmt.Errorf("error getting namespoaces: %v\n", err)
 		return nil, nil, err
@@ -133,7 +185,6 @@ func ListNameSpaces(coreClient kubernetes.Interface) (*v1.NamespaceList, []strin
 }
 
 func main() {
-
 	kubeConfigPath := getKubeConfigPath()
 	config := getKubeConfigFromFile(kubeConfigPath)
 	kubeContextsList := getKubeContexts(config)
@@ -162,16 +213,38 @@ func main() {
 
 	kubeDynamicClient, err := createDynamicClient(kubeConfigPath)
 
-	Es := (&customresource.ExternalSecret{}).NewCR().(*customresource.ExternalSecret)
-	Ks := (&customresource.Kustomization{}).NewCR().(*customresource.Kustomization)
+	Es := (&customresource.ExternalSecret{}).NewCR("", "", "", "", "").(*customresource.ExternalSecret)
+	Ks := (&customresource.Kustomization{}).NewCR("", "", "", "", "").(*customresource.Kustomization)
+	GitRepo := (&customresource.GitRepository{}).NewCR("", "", "", "", "").(*customresource.GitRepository)
+	Hc := (&customresource.HelmRepository{}).NewCR("", "", "", "", "").(*customresource.HelmRepository)
+	Hr := (&customresource.HelmRelease{}).NewCR("", "", "", "", "").(*customresource.HelmRelease)
 
-	ESList, ESListIssue := Es.GetCRList(kubeDynamicClient, nsChoice)
-	logger.Logger.Debug("Listing customResource", "kind", Es.PrettyName, "namespace", nsChoice)
-	charm.CreateObjectArray(ESList)
-	Es.DisplayCRIssue(ESListIssue)
-	KSList, KSListIssue := Ks.GetCRList(kubeDynamicClient, nsChoice)
-	logger.Logger.Debug("Listing customResource", "kind", Ks.PrettyName, "namespace", nsChoice)
-	charm.CreateObjectArray(KSList)
-	Ks.DisplayCRIssue(KSListIssue)
+	Es.AnalyzeCRStatus(kubeDynamicClient, nsChoice)
+	Ks.AnalyzeCRStatus(kubeDynamicClient, nsChoice)
+	GitRepo.AnalyzeCRStatus(kubeDynamicClient, nsChoice)
+	Hc.AnalyzeCRStatus(kubeDynamicClient, nsChoice)
+	Hr.AnalyzeCRStatus(kubeDynamicClient, nsChoice)
+
+	podList, podListIssue, err := GetPodList(kubeClient, nsChoice)
+
+	if podList != nil {
+		charm.CreateObjectArray(podList, []string{"NAME", "STATUS", "READY"})
+	}
+
+	if len(podListIssue) > 0 {
+		logger.Logger.Error("ISSUE DETECTED")
+		for _, pb := range podListIssue {
+			logger.Logger.Error("Unsynced/NotReady", "name", pb["Name"], "status", pb["Status"], "ready", pb["Ready"], "hint", pb["Message"])
+			fmt.Println("")
+		}
+	} else {
+		logger.Logger.Info("All Pods are healthy")
+		fmt.Println("")
+	}
+
+	//fmt.Print("pod list")
+	//fmt.Println(podList)
+	//fmt.Print("pod list issue")
+	//fmt.Println(podListIssue)
 
 }

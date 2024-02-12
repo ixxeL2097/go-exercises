@@ -2,11 +2,12 @@ package customresource
 
 import (
 	"context"
-	//"github.com/charmbracelet/log"
+	"fmt"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
+	"kubectl/charm"
 	"kubectl/logger"
 	"time"
 )
@@ -14,7 +15,7 @@ import (
 type CustomResourceDefinition interface {
 	GetCRList(kubeClient dynamic.Interface, namespace string) ([][]string, []map[string]string)
 	DisplayCRIssue(CRListIssue []map[string]string)
-	NewCR() CustomResourceDefinition
+	NewCR(group string, kind string, successCondition string, version string, prettyName string) CustomResourceDefinition
 }
 
 type CustomResource struct {
@@ -33,35 +34,159 @@ type Kustomization struct {
 	CustomResource
 }
 
-func (e *ExternalSecret) NewCR() CustomResourceDefinition {
+type GitRepository struct {
+	CustomResource
+}
+
+type HelmRelease struct {
+	CustomResource
+}
+
+type HelmRepository struct {
+	CustomResource
+}
+
+func (e *ExternalSecret) NewCR(group string, kind string, successCondition string, version string, prettyName string) CustomResourceDefinition {
+	if group == "" {
+		group = "external-secrets.io"
+	}
+	if kind == "" {
+		kind = "externalsecrets"
+	}
+	if successCondition == "" {
+		successCondition = "SecretSynced"
+	}
+	if version == "" {
+		version = "v1beta1"
+	}
+	if prettyName == "" {
+		prettyName = "ExternalSecret"
+	}
 	return &ExternalSecret{
 		CustomResource: CustomResource{
-			Group:            "external-secrets.io",
-			Version:          "v1beta1",
-			Kind:             "externalsecrets",
-			SuccessCondition: "SecretSynced",
-			PrettyName:       "ExternalSecret",
+			Group:            group,
+			Version:          version,
+			Kind:             kind,
+			SuccessCondition: successCondition,
+			PrettyName:       prettyName,
 		},
 	}
 }
 
-func (e *Kustomization) NewCR() CustomResourceDefinition {
+func (e *Kustomization) NewCR(group string, kind string, successCondition string, version string, prettyName string) CustomResourceDefinition {
+	if group == "" {
+		group = "kustomize.toolkit.fluxcd.io"
+	}
+	if kind == "" {
+		kind = "kustomizations"
+	}
+	if successCondition == "" {
+		successCondition = "ReconciliationSucceeded"
+	}
+	if version == "" {
+		version = "v1"
+	}
+	if prettyName == "" {
+		prettyName = "Kustomization"
+	}
 	return &Kustomization{
 		CustomResource: CustomResource{
-			Group:            "kustomize.toolkit.fluxcd.io",
-			Version:          "v1",
-			Kind:             "kustomizations",
-			SuccessCondition: "SecretSynced",
-			PrettyName:       "Kustomization",
+			Group:            group,
+			Version:          version,
+			Kind:             kind,
+			SuccessCondition: successCondition,
+			PrettyName:       prettyName,
+		},
+	}
+}
+
+func (e *GitRepository) NewCR(group string, kind string, successCondition string, version string, prettyName string) CustomResourceDefinition {
+	if group == "" {
+		group = "source.toolkit.fluxcd.io"
+	}
+	if kind == "" {
+		kind = "gitrepositories"
+	}
+	if successCondition == "" {
+		successCondition = "Succeeded"
+	}
+	if version == "" {
+		version = "v1"
+	}
+	if prettyName == "" {
+		prettyName = "GitRepository"
+	}
+	return &GitRepository{
+		CustomResource: CustomResource{
+			Group:            group,
+			Version:          version,
+			Kind:             kind,
+			SuccessCondition: successCondition,
+			PrettyName:       prettyName,
+		},
+	}
+}
+
+func (e *HelmRelease) NewCR(group string, kind string, successCondition string, version string, prettyName string) CustomResourceDefinition {
+	if group == "" {
+		group = "helm.toolkit.fluxcd.io"
+	}
+	if kind == "" {
+		kind = "helmreleases"
+	}
+	if successCondition == "" {
+		successCondition = "ReconciliationSucceeded"
+	}
+	if version == "" {
+		version = "v2beta1"
+	}
+	if prettyName == "" {
+		prettyName = "HelmRelease"
+	}
+	return &HelmRelease{
+		CustomResource: CustomResource{
+			Group:            group,
+			Version:          version,
+			Kind:             kind,
+			SuccessCondition: successCondition,
+			PrettyName:       prettyName,
+		},
+	}
+}
+
+func (e *HelmRepository) NewCR(group string, kind string, successCondition string, version string, prettyName string) CustomResourceDefinition {
+	if group == "" {
+		group = "source.toolkit.fluxcd.io"
+	}
+	if kind == "" {
+		kind = "helmrepositories"
+	}
+	if successCondition == "" {
+		successCondition = "Succeeded"
+	}
+	if version == "" {
+		version = "v2beta1"
+	}
+	if prettyName == "" {
+		prettyName = "HelmRepository"
+	}
+	return &HelmRepository{
+		CustomResource: CustomResource{
+			Group:            group,
+			Version:          version,
+			Kind:             kind,
+			SuccessCondition: successCondition,
+			PrettyName:       prettyName,
 		},
 	}
 }
 
 func (cr *CustomResource) GetCRList(kubeClient dynamic.Interface, namespace string) ([][]string, []map[string]string) {
+	logger.Logger.Debug("Looking for customResource", "kind", cr.PrettyName, "namespace", namespace)
 	var customResource = schema.GroupVersionResource{Group: cr.Group, Version: cr.Version, Resource: cr.Kind}
 	customResources, err := kubeClient.Resource(customResource).Namespace(namespace).List(context.Background(), metav1.ListOptions{})
 	if customResources == nil || len(customResources.Items) == 0 {
-		logger.Logger.Info("No CustomResource found", "kind", cr.PrettyName)
+		logger.Logger.Info("No CustomResource found", "kind", cr.PrettyName, "namespace", namespace)
 		return nil, nil
 	}
 	logger.ErrHandle(err)
@@ -135,8 +260,21 @@ func (cr *CustomResource) DisplayCRIssue(CRListIssue []map[string]string) {
 		logger.Logger.Error("ISSUE DETECTED", "object", cr.PrettyName)
 		for _, pb := range CRListIssue {
 			logger.Logger.Error("Unsynced/NotReady", "kind", cr.PrettyName, "name", pb["Name"], "status", pb["Status"], "ready", pb["Ready"], "hint", pb["Message"])
+			fmt.Println("")
 		}
 	} else {
 		logger.Logger.Info("All CustomResources are healthy", "kind", cr.PrettyName)
+		fmt.Println("")
+	}
+}
+
+func (cr *CustomResource) AnalyzeCRStatus(kubeClient dynamic.Interface, namespace string) {
+	CRList, CRListIssue := cr.GetCRList(kubeClient, namespace)
+	if CRList != nil {
+		logger.Logger.Debug("Listing customResource", "kind", cr.PrettyName, "namespace", namespace)
+		charm.CreateObjectArray(CRList, make([]string, 0))
+		if CRListIssue != nil {
+			cr.DisplayCRIssue(CRListIssue)
+		}
 	}
 }
