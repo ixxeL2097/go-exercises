@@ -59,7 +59,7 @@ func CreateObjectArray(ObjectList [][]string, headers []string) {
 		default:
 			style = EvenRowStyle
 		}
-		style = style.Copy().Width(0) // force to 0 width, will size automatically with wider element
+		style = style.Copy().Width(0).MaxWidth(120) // force to 0 width, will size automatically with wider element
 		return style
 	}
 	t := table.New().Border(lipgloss.ThickBorder()).BorderStyle(BorderStyle).StyleFunc(styleFunc).Headers(headers...).Rows(ObjectList...)

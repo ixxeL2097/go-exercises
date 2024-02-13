@@ -20,6 +20,8 @@ func init() {
 	styles.Values["critical"] = lipgloss.NewStyle().Bold(true)
 	styles.Keys["err"] = lipgloss.NewStyle().Foreground(lipgloss.Color("204"))
 	styles.Values["err"] = lipgloss.NewStyle().Bold(true)
+	styles.Keys["errors"] = lipgloss.NewStyle().Foreground(lipgloss.Color("204"))
+	styles.Values["errors"] = lipgloss.NewStyle().Bold(true)
 	styles.Keys["hint"] = lipgloss.NewStyle().Foreground(lipgloss.Color("204"))
 	styles.Values["hint"] = lipgloss.NewStyle().Bold(true)
 	styles.Keys["status"] = lipgloss.NewStyle().Foreground(lipgloss.Color("204"))

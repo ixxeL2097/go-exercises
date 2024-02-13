@@ -7,7 +7,9 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes"
 	"kubectl/charm"
+	"kubectl/k8s"
 	"kubectl/logger"
 	"time"
 )
@@ -23,9 +25,9 @@ type CustomResourceDefinition interface {
 	getSuccessCondition() string
 	setPrettyName(prettyName string)
 	getPrettyName() string
-	GetCRList(kubeClient dynamic.Interface, namespace string) ([][]string, []map[string]string)
+	GetCRList(kubeClient dynamic.Interface, kubeStaticClient kubernetes.Interface, namespace string) ([][]string, []map[string]string)
 	DisplayCRIssue(CRListIssue []map[string]string)
-	AnalyzeCRStatus(kubeClient dynamic.Interface, namespace string)
+	AnalyzeCRStatus(kubeClient dynamic.Interface, kubeStaticClient kubernetes.Interface, namespace string)
 }
 
 type CustomResource struct {
@@ -95,25 +97,25 @@ type HelmRepository struct {
 
 func GetCRD(crdType string, group string, kind string, version string) CustomResourceDefinition {
 	if crdType == "externalsecret" {
-		return NewEs(group, kind, version)
+		return NewExternalSecret(group, kind, version)
 	}
 	if crdType == "kustomization" {
-		return NewKs(group, kind, version)
+		return NewKustomization(group, kind, version)
 	}
 	if crdType == "gitrepository" {
-		return NewGr(group, kind, version)
+		return NewGitRepository(group, kind, version)
 	}
 	if crdType == "helmrelease" {
-		return NewHr(group, kind, version)
+		return NewHelmRelease(group, kind, version)
 	}
 	if crdType == "helmrepository" {
-		return NewHc(group, kind, version)
+		return NewHelmRepository(group, kind, version)
 	}
 	logger.ErrHandle(fmt.Errorf("Wrong CRD type passed : %v", crdType))
 	return nil
 }
 
-func NewEs(group string, kind string, version string) CustomResourceDefinition {
+func NewExternalSecret(group string, kind string, version string) CustomResourceDefinition {
 	if group == "" {
 		group = "external-secrets.io"
 	}
@@ -134,7 +136,7 @@ func NewEs(group string, kind string, version string) CustomResourceDefinition {
 	}
 }
 
-func NewKs(group string, kind string, version string) CustomResourceDefinition {
+func NewKustomization(group string, kind string, version string) CustomResourceDefinition {
 	if group == "" {
 		group = "kustomize.toolkit.fluxcd.io"
 	}
@@ -155,7 +157,7 @@ func NewKs(group string, kind string, version string) CustomResourceDefinition {
 	}
 }
 
-func NewGr(group string, kind string, version string) CustomResourceDefinition {
+func NewGitRepository(group string, kind string, version string) CustomResourceDefinition {
 	if group == "" {
 		group = "source.toolkit.fluxcd.io"
 	}
@@ -176,7 +178,7 @@ func NewGr(group string, kind string, version string) CustomResourceDefinition {
 	}
 }
 
-func NewHr(group string, kind string, version string) CustomResourceDefinition {
+func NewHelmRelease(group string, kind string, version string) CustomResourceDefinition {
 	if group == "" {
 		group = "helm.toolkit.fluxcd.io"
 	}
@@ -197,7 +199,7 @@ func NewHr(group string, kind string, version string) CustomResourceDefinition {
 	}
 }
 
-func NewHc(group string, kind string, version string) CustomResourceDefinition {
+func NewHelmRepository(group string, kind string, version string) CustomResourceDefinition {
 	if group == "" {
 		group = "source.toolkit.fluxcd.io"
 	}
@@ -218,16 +220,15 @@ func NewHc(group string, kind string, version string) CustomResourceDefinition {
 	}
 }
 
-func (cr *CustomResource) GetCRList(kubeClient dynamic.Interface, namespace string) ([][]string, []map[string]string) {
+func (cr *CustomResource) GetCRList(kubeDynamicClient dynamic.Interface, kubeStaticClient kubernetes.Interface, namespace string) ([][]string, []map[string]string) {
 	logger.Logger.Debug("Looking for customResource", "kind", cr.getPrettyName(), "namespace", namespace)
 	var customResource = schema.GroupVersionResource{Group: cr.getGroup(), Version: cr.getVersion(), Resource: cr.getKind()}
-	customResources, err := kubeClient.Resource(customResource).Namespace(namespace).List(context.Background(), metav1.ListOptions{})
+	customResources, err := kubeDynamicClient.Resource(customResource).Namespace(namespace).List(context.Background(), metav1.ListOptions{})
 	if customResources == nil || len(customResources.Items) == 0 {
 		logger.Logger.Info("No CustomResource found", "kind", cr.getPrettyName(), "namespace", namespace)
 		return nil, nil
 	}
 	logger.ErrHandle(err)
-
 	CRList := make([][]string, 0)
 	CRListIssue := make([]map[string]string, 0)
 
@@ -274,12 +275,17 @@ func (cr *CustomResource) GetCRList(kubeClient dynamic.Interface, namespace stri
 					CRList = append(CRList, row)
 
 					if reason != cr.getSuccessCondition() {
-						CRListIssue = append(CRListIssue, map[string]string{
+						CREvents := k8s.GetEventsFromResource(kubeStaticClient, cr.getPrettyName(), namespace, custom.Object["metadata"].(map[string]interface{})["name"].(string))
+						issue := map[string]string{
 							"Name":    custom.Object["metadata"].(map[string]interface{})["name"].(string),
 							"Status":  reason,
 							"Ready":   status,
 							"Message": message,
-						})
+						}
+						for _, event := range CREvents {
+							issue["EventMessage"] += event.Message
+						}
+						CRListIssue = append(CRListIssue, issue)
 					}
 				}
 			} else {
@@ -294,19 +300,17 @@ func (cr *CustomResource) GetCRList(kubeClient dynamic.Interface, namespace stri
 
 func (cr *CustomResource) DisplayCRIssue(CRListIssue []map[string]string) {
 	if len(CRListIssue) > 0 {
-		logger.Logger.Error("ISSUE DETECTED", "object", cr.getPrettyName())
+		logger.Logger.Error("ISSUE DETECTED", "kind", cr.getPrettyName())
 		for _, pb := range CRListIssue {
-			logger.Logger.Error("Unsynced/NotReady", "kind", cr.getPrettyName(), "name", pb["Name"], "status", pb["Status"], "ready", pb["Ready"], "hint", pb["Message"])
-			fmt.Println("")
+			logger.Logger.Error("Unsynced/NotReady", "kind", cr.getPrettyName(), "name", pb["Name"], "status", pb["Status"], "ready", pb["Ready"], "errors", pb["EventMessage"]+"\n")
 		}
 	} else {
 		logger.Logger.Info("All CustomResources are healthy", "kind", cr.getPrettyName())
-		fmt.Println("")
 	}
 }
 
-func (cr *CustomResource) AnalyzeCRStatus(kubeClient dynamic.Interface, namespace string) {
-	CRList, CRListIssue := cr.GetCRList(kubeClient, namespace)
+func (cr *CustomResource) AnalyzeCRStatus(kubeDynamicClient dynamic.Interface, kubeStaticClient kubernetes.Interface, namespace string) {
+	CRList, CRListIssue := cr.GetCRList(kubeDynamicClient, kubeStaticClient, namespace)
 	if CRList != nil {
 		logger.Logger.Debug("Listing customResource", "kind", cr.getPrettyName(), "namespace", namespace)
 		charm.CreateObjectArray(CRList, make([]string, 0))

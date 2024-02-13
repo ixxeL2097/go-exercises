@@ -4,7 +4,8 @@ import (
 	"context"
 	"fmt"
 	"github.com/charmbracelet/huh"
-	v1 "k8s.io/api/core/v1"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
@@ -13,10 +14,13 @@ import (
 	"k8s.io/client-go/tools/clientcmd/api"
 	"kubectl/charm"
 	"kubectl/customresource"
+	"kubectl/k8s"
 	"kubectl/logger"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"time"
 )
 
 func runCmd(command string) (string, error) {
@@ -107,71 +111,203 @@ func createDynamicClient(kubeConfigPath string) (dynamic.Interface, error) {
 	return dynamicClient, nil
 }
 
-func ListPods(namespace string, kubeClient kubernetes.Interface) (*v1.PodList, []string, error) {
-	pods, err := kubeClient.CoreV1().Pods(namespace).List(context.Background(), metav1.ListOptions{})
-	if err != nil {
-		err = fmt.Errorf("error getting pods: %v\n", err)
-		return nil, nil, err
-	}
-	podsName := make([]string, 0)
-	for _, n := range pods.Items {
-		podsName = append(podsName, n.Name)
-	}
-	return pods, podsName, nil
-}
-
-func GetPodList(kubeClient kubernetes.Interface, namespace string) ([][]string, []map[string]string, error) {
-	pods, err := kubeClient.CoreV1().Pods(namespace).List(context.Background(), metav1.ListOptions{})
-	logger.ErrHandle(err)
+func getPodListErrors(kubeClient kubernetes.Interface, namespace string) ([][]string, []map[string]string) {
+	pods := k8s.GetPodsList(namespace, kubeClient)
 
 	podList := make([][]string, 0)
 	podListIssue := make([]map[string]string, 0)
 
 	for _, pod := range pods.Items {
-		name := pod.Name
-		phase := string(pod.Status.Phase)
-		var ready string
-
-		for _, condition := range pod.Status.Conditions {
-			if condition.Type == v1.PodReady {
-				ready = string(condition.Status)
-			}
+		podStatuses, podEvents := k8s.GetPodStatuses(kubeClient, namespace, &pod)
+		podRow := []string{
+			pod.ObjectMeta.Name,
+			string(pod.Status.Phase),
+			podStatuses["podReady"],
+			podStatuses["initialized"],
+			podStatuses["scheduled"],
+			podStatuses["containersReady"],
+			podStatuses["reason"],
+			podStatuses["waitingReason"],
 		}
+		podList = append(podList, podRow)
+
+		if podRow[2] != "True" {
+			issue := map[string]string{
+				"Name":     pod.ObjectMeta.Name,
+				"Phase":    string(pod.Status.Phase),
+				"PodReady": podStatuses["podReady"],
+				"Reason":   podStatuses["reason"],
+				"Status":   podStatuses["waitingReason"],
+				"Message":  podStatuses["waitingReasonMessage"],
+			}
+			for _, event := range podEvents {
+				issue["EventMessage"] += event.Message + "\n"
+			}
+			podListIssue = append(podListIssue, issue)
+		}
+	}
+	return podList, podListIssue
+}
+
+func detectPodsErrors(kubeClient kubernetes.Interface, namespace string) ([][]string, []map[string]string) {
+	podList := make([][]string, 0)
+	podListIssue := make([]map[string]string, 0)
+
+	timeout := time.After(3 * time.Second)
+	watcher, err := kubeClient.CoreV1().Pods(namespace).Watch(context.Background(),
+		metav1.ListOptions{
+			FieldSelector: "",
+		})
+	logger.ErrHandle(err)
+
+	for {
+		select {
+		case event, ok := <-watcher.ResultChan():
+			if !ok {
+				return podList, podListIssue
+			}
+			fmt.Println("EVENT")
+
+			pod, ok := event.Object.(*corev1.Pod)
+			if !ok {
+				continue
+			}
+			var podReady, initialized, scheduled, containersReady, reason, waitingReason, waitingReasonMessage string
+			var podEvents []corev1.Event
+			//fmt.Println("Pod name:", pod.ObjectMeta.Name)
+			for _, condition := range pod.Status.Conditions {
+				//fmt.Println("Condition type:", condition.Type, "Status:", condition.Status, "timestamp:", condition.LastTransitionTime)
+				if condition.Type == corev1.PodReady {
+					podReady = string(condition.Status)
+					if podReady != "True" {
+						reason = condition.Reason
+						podEvents = k8s.GetEventsFromResource(kubeClient, "Pod", namespace, pod.Name)
+						for _, c := range pod.Status.ContainerStatuses {
+							if c.State.Waiting != nil && c.State.Waiting.Reason != "" {
+								waitingReason = c.State.Waiting.Reason
+								waitingReasonMessage = c.State.Waiting.Message
+							}
+							if c.State.Terminated != nil && c.State.Terminated.Reason != "" {
+								waitingReason = c.State.Terminated.Reason
+								waitingReasonMessage = c.State.Terminated.Message
+							}
+							if c.State.Running != nil {
+								waitingReason = "Running"
+							}
+						}
+					}
+				}
+				if condition.Type == corev1.PodInitialized {
+					initialized = string(condition.Status)
+				}
+				if condition.Type == corev1.PodScheduled {
+					scheduled = string(condition.Status)
+				}
+				if condition.Type == corev1.ContainersReady {
+					containersReady = string(condition.Status)
+				}
+			}
+
+			podRow := []string{
+				pod.ObjectMeta.Name,
+				string(pod.Status.Phase),
+				podReady,
+				initialized,
+				scheduled,
+				containersReady,
+				reason,
+				waitingReason,
+			}
+			podList = append(podList, podRow)
+
+			if podRow[2] != "True" {
+				issue := map[string]string{
+					"Name":     pod.ObjectMeta.Name,
+					"Phase":    string(pod.Status.Phase),
+					"PodReady": podReady,
+					"Reason":   reason,
+					"Status":   waitingReason,
+					"Message":  waitingReasonMessage,
+				}
+
+				for _, event := range podEvents {
+					issue["EventMessage"] += event.Message + "\n"
+				}
+				podListIssue = append(podListIssue, issue)
+			}
+
+		case <-timeout:
+			return podList, podListIssue
+		}
+	}
+}
+
+func GetDeploymentList(kubeClient kubernetes.Interface, namespace string) ([][]string, []map[string]string, error) {
+	deployments, err := kubeClient.AppsV1().Deployments(namespace).List(context.Background(), metav1.ListOptions{})
+	logger.ErrHandle(err)
+
+	deploymentList := make([][]string, 0)
+	deploymentListIssue := make([]map[string]string, 0)
+
+	for _, deployment := range deployments.Items {
+		name := deployment.Name
+		availableReplicas := deployment.Status.AvailableReplicas
+		replicas := deployment.Status.Replicas
+		readyReplicas := deployment.Status.ReadyReplicas
+		updatedReplicas := deployment.Status.UpdatedReplicas
 
 		row := []string{
 			name,
-			phase,
-			ready,
+			fmt.Sprintf("%d/%d", availableReplicas, replicas),
+			fmt.Sprintf("%d/%d", readyReplicas, replicas),
+			fmt.Sprintf("%d/%d", updatedReplicas, replicas), // Ajout de la colonne UP-TO-DATE
 		}
-		podList = append(podList, row)
+		deploymentList = append(deploymentList, row)
 
-		if podNotHealthy(&pod) {
-			podListIssue = append(podListIssue, map[string]string{
-				"Name":  name,
-				"Phase": phase,
-				"Ready": ready,
+		if deploymentNotHealthy(&deployment) {
+			deploymentListIssue = append(deploymentListIssue, map[string]string{
+				"Name":      name,
+				"Available": fmt.Sprintf("%d/%d", availableReplicas, replicas),
+				"Ready":     fmt.Sprintf("%d/%d", readyReplicas, replicas),
+				"UpToDate":  fmt.Sprintf("%d/%d", updatedReplicas, replicas), // Ajout de la colonne UP-TO-DATE
 			})
 		}
 	}
-	return podList, podListIssue, nil
+	return deploymentList, deploymentListIssue, nil
 }
 
-func podNotHealthy(pod *v1.Pod) bool {
-	if pod.Status.Phase != v1.PodRunning && pod.Status.Phase != v1.PodSucceeded {
-		return true
+func deploymentNotHealthy(deployment *appsv1.Deployment) bool {
+	// Critères de non-santé :
+	// - Replicas disponibles inférieures aux replicas souhaitées
+	// - Répliques non prêtes supérieures à un seuil configurable (exemple : 0)
+	// - Présence de conditions d'erreurs
+
+	// Récupérer le seuil de répliques non prêtes acceptable
+	maxUnreadyReplicas, err := strconv.Atoi(os.Getenv("DEPLOYMENT_UNREADY_THRESHOLD"))
+	if err != nil || maxUnreadyReplicas < 0 {
+		// Valeur par défaut en cas d'erreur ou de valeur invalide
+		maxUnreadyReplicas = 0
 	}
-	if pod.Status.Phase == v1.PodSucceeded {
-		return false
-	}
-	for _, condition := range pod.Status.Conditions {
-		if condition.Type == v1.PodReady && condition.Status == v1.ConditionTrue {
-			return false
+
+	availableReplicas := deployment.Status.AvailableReplicas
+	desiredReplicas := deployment.Spec.Replicas
+	unreadyReplicas := deployment.Status.Replicas - deployment.Status.ReadyReplicas
+	conditions := deployment.Status.Conditions
+
+	// Vérifier les conditions
+	for _, condition := range conditions {
+		if condition.Type == appsv1.DeploymentProgressing && condition.Status == corev1.ConditionFalse {
+			return true
+		}
+		if condition.Type == appsv1.DeploymentReplicaFailure && condition.Status == corev1.ConditionTrue {
+			return true
 		}
 	}
-	return true
+	// Vérifier le nombre de répliques disponibles et non prêtes
+	return availableReplicas < *desiredReplicas || unreadyReplicas > int32(maxUnreadyReplicas)
 }
 
-func ListNameSpaces(kubeClient kubernetes.Interface) (*v1.NamespaceList, []string, error) {
+func ListNameSpaces(kubeClient kubernetes.Interface) (*corev1.NamespaceList, []string, error) {
 	namespaces, err := kubeClient.CoreV1().Namespaces().List(context.Background(), metav1.ListOptions{})
 	if err != nil {
 		err = fmt.Errorf("error getting namespoaces: %v\n", err)
@@ -219,28 +355,41 @@ func main() {
 	Hc := customresource.GetCRD("helmrepository", "", "", "")
 	Hr := customresource.GetCRD("helmrelease", "", "", "")
 
-	Es.AnalyzeCRStatus(kubeDynamicClient, nsChoice)
-	Ks.AnalyzeCRStatus(kubeDynamicClient, nsChoice)
-	Gr.AnalyzeCRStatus(kubeDynamicClient, nsChoice)
-	Hc.AnalyzeCRStatus(kubeDynamicClient, nsChoice)
-	Hr.AnalyzeCRStatus(kubeDynamicClient, nsChoice)
+	Es.AnalyzeCRStatus(kubeDynamicClient, kubeClient, nsChoice)
+	Ks.AnalyzeCRStatus(kubeDynamicClient, kubeClient, nsChoice)
+	Gr.AnalyzeCRStatus(kubeDynamicClient, kubeClient, nsChoice)
+	Hc.AnalyzeCRStatus(kubeDynamicClient, kubeClient, nsChoice)
+	Hr.AnalyzeCRStatus(kubeDynamicClient, kubeClient, nsChoice)
 
-	podList, podListIssue, err := GetPodList(kubeClient, nsChoice)
-
+	podList, podListIssue := getPodListErrors(kubeClient, nsChoice)
 	if podList != nil {
-		charm.CreateObjectArray(podList, []string{"NAME", "STATUS", "READY"})
+		charm.CreateObjectArray(podList, []string{"NAME", "PHASE", "PODREADY", "INIT", "SCHEDULED", "CTRREADY", "REASON", "STATUS"})
 	}
-
 	if len(podListIssue) > 0 {
 		logger.Logger.Error("ISSUE DETECTED")
 		for _, pb := range podListIssue {
-			logger.Logger.Error("Unsynced/NotReady", "name", pb["Name"], "status", pb["Status"], "ready", pb["Ready"], "hint", pb["Message"])
+			logger.Logger.Error("Unsynced/NotReady", "name", pb["Name"], "ready", pb["PodReady"], "status", pb["Status"], "errors", pb["EventMessage"])
 			fmt.Println("")
 		}
 	} else {
 		logger.Logger.Info("All Pods are healthy")
 		fmt.Println("")
 	}
+
+	//deployList, deployListIssue, err := GetDeploymentList(kubeClient, nsChoice)
+	//if deployList != nil {
+	//	charm.CreateObjectArray(deployList, []string{"NAME", "AVAILABLE", "READY", "UP-TO-DATE"})
+	//}
+	//if len(deployListIssue) > 0 {
+	//	logger.Logger.Error("ISSUE DETECTED")
+	//	for _, pb := range deployListIssue {
+	//		logger.Logger.Error("Unsynced/NotReady", "name", pb["Name"], "available", pb["Available"], "ready", pb["Ready"], "uptodate", pb["UpToDate"])
+	//		fmt.Println("")
+	//	}
+	//} else {
+	//	logger.Logger.Info("All Pods are healthy")
+	//	fmt.Println("")
+	//}
 
 	//fmt.Print("pod list")
 	//fmt.Println(podList)
