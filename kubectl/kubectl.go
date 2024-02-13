@@ -7,20 +7,14 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
-	"k8s.io/client-go/tools/clientcmd/api"
 	"kubectl/charm"
 	"kubectl/customresource"
 	"kubectl/k8s"
 	"kubectl/logger"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
-	"time"
 )
 
 func runCmd(command string) (string, error) {
@@ -31,215 +25,6 @@ func runCmd(command string) (string, error) {
 		logger.Logger.Fatal("Exit", "critical", err)
 	}
 	return string(output), nil
-}
-
-func getKubeConfigPath() string {
-	userHomeDir, err := os.UserHomeDir()
-	logger.ErrHandle(err)
-
-	kubeConfigPath := filepath.Join(userHomeDir, ".kube", "config")
-	return kubeConfigPath
-}
-
-func getKubeConfigFromFile(kubeConfigPath string) *api.Config {
-	config, err := clientcmd.LoadFromFile(kubeConfigPath)
-	logger.ErrHandle(err)
-	return config
-}
-
-func getKubeContexts(config *api.Config) []string {
-	kubeContexts := make([]string, 0)
-	for kubeContext := range config.Contexts {
-		kubeContexts = append(kubeContexts, kubeContext)
-	}
-	return kubeContexts
-}
-
-func switchKubeContext(context string, kubeConfigPath string, config *api.Config) {
-	config.CurrentContext = context
-	err := clientcmd.WriteToFile(*config, kubeConfigPath)
-	logger.ErrHandle(err)
-}
-
-func switchKubeContextNamespace(context string, kubeConfigPath string, namespace string, config *api.Config) {
-	config.Contexts[context].Namespace = namespace
-	err := clientcmd.WriteToFile(*config, kubeConfigPath)
-	logger.ErrHandle(err)
-}
-
-func createClient(kubeConfigPath string) (kubernetes.Interface, error) {
-	var kubeConfig *rest.Config
-	if kubeConfigPath != "" {
-		config, err := clientcmd.BuildConfigFromFlags("", kubeConfigPath)
-		if err != nil {
-			return nil, fmt.Errorf("unable to load kubeconfig from %s: %v", kubeConfigPath, err)
-		}
-		kubeConfig = config
-	} else {
-		config, err := rest.InClusterConfig()
-		if err != nil {
-			return nil, fmt.Errorf("unable to load in-cluster config: %v", err)
-		}
-		kubeConfig = config
-	}
-	client, err := kubernetes.NewForConfig(kubeConfig)
-	if err != nil {
-		return nil, fmt.Errorf("unable to create a client: %v", err)
-	}
-	return client, nil
-}
-
-func createDynamicClient(kubeConfigPath string) (dynamic.Interface, error) {
-	var kubeConfig *rest.Config
-	if kubeConfigPath != "" {
-		config, err := clientcmd.BuildConfigFromFlags("", kubeConfigPath)
-		if err != nil {
-			return nil, fmt.Errorf("unable to load kubeconfig from %s: %v", kubeConfigPath, err)
-		}
-		kubeConfig = config
-	} else {
-		config, err := rest.InClusterConfig()
-		if err != nil {
-			return nil, fmt.Errorf("unable to load in-cluster config: %v", err)
-		}
-		kubeConfig = config
-	}
-	dynamicClient, err := dynamic.NewForConfig(kubeConfig)
-	if err != nil {
-		return nil, fmt.Errorf("unable to create a client: %v", err)
-	}
-	return dynamicClient, nil
-}
-
-func getPodListErrors(kubeClient kubernetes.Interface, namespace string) ([][]string, []map[string]string) {
-	pods := k8s.GetPodsList(namespace, kubeClient)
-
-	podList := make([][]string, 0)
-	podListIssue := make([]map[string]string, 0)
-
-	for _, pod := range pods.Items {
-		podStatuses, podEvents := k8s.GetPodStatuses(kubeClient, namespace, &pod)
-		podRow := []string{
-			pod.ObjectMeta.Name,
-			string(pod.Status.Phase),
-			podStatuses["podReady"],
-			podStatuses["initialized"],
-			podStatuses["scheduled"],
-			podStatuses["containersReady"],
-			podStatuses["reason"],
-			podStatuses["waitingReason"],
-		}
-		podList = append(podList, podRow)
-
-		if podRow[2] != "True" {
-			issue := map[string]string{
-				"Name":     pod.ObjectMeta.Name,
-				"Phase":    string(pod.Status.Phase),
-				"PodReady": podStatuses["podReady"],
-				"Reason":   podStatuses["reason"],
-				"Status":   podStatuses["waitingReason"],
-				"Message":  podStatuses["waitingReasonMessage"],
-			}
-			for _, event := range podEvents {
-				issue["EventMessage"] += event.Message + "\n"
-			}
-			podListIssue = append(podListIssue, issue)
-		}
-	}
-	return podList, podListIssue
-}
-
-func detectPodsErrors(kubeClient kubernetes.Interface, namespace string) ([][]string, []map[string]string) {
-	podList := make([][]string, 0)
-	podListIssue := make([]map[string]string, 0)
-
-	timeout := time.After(3 * time.Second)
-	watcher, err := kubeClient.CoreV1().Pods(namespace).Watch(context.Background(),
-		metav1.ListOptions{
-			FieldSelector: "",
-		})
-	logger.ErrHandle(err)
-
-	for {
-		select {
-		case event, ok := <-watcher.ResultChan():
-			if !ok {
-				return podList, podListIssue
-			}
-			fmt.Println("EVENT")
-
-			pod, ok := event.Object.(*corev1.Pod)
-			if !ok {
-				continue
-			}
-			var podReady, initialized, scheduled, containersReady, reason, waitingReason, waitingReasonMessage string
-			var podEvents []corev1.Event
-			//fmt.Println("Pod name:", pod.ObjectMeta.Name)
-			for _, condition := range pod.Status.Conditions {
-				//fmt.Println("Condition type:", condition.Type, "Status:", condition.Status, "timestamp:", condition.LastTransitionTime)
-				if condition.Type == corev1.PodReady {
-					podReady = string(condition.Status)
-					if podReady != "True" {
-						reason = condition.Reason
-						podEvents = k8s.GetEventsFromResource(kubeClient, "Pod", namespace, pod.Name)
-						for _, c := range pod.Status.ContainerStatuses {
-							if c.State.Waiting != nil && c.State.Waiting.Reason != "" {
-								waitingReason = c.State.Waiting.Reason
-								waitingReasonMessage = c.State.Waiting.Message
-							}
-							if c.State.Terminated != nil && c.State.Terminated.Reason != "" {
-								waitingReason = c.State.Terminated.Reason
-								waitingReasonMessage = c.State.Terminated.Message
-							}
-							if c.State.Running != nil {
-								waitingReason = "Running"
-							}
-						}
-					}
-				}
-				if condition.Type == corev1.PodInitialized {
-					initialized = string(condition.Status)
-				}
-				if condition.Type == corev1.PodScheduled {
-					scheduled = string(condition.Status)
-				}
-				if condition.Type == corev1.ContainersReady {
-					containersReady = string(condition.Status)
-				}
-			}
-
-			podRow := []string{
-				pod.ObjectMeta.Name,
-				string(pod.Status.Phase),
-				podReady,
-				initialized,
-				scheduled,
-				containersReady,
-				reason,
-				waitingReason,
-			}
-			podList = append(podList, podRow)
-
-			if podRow[2] != "True" {
-				issue := map[string]string{
-					"Name":     pod.ObjectMeta.Name,
-					"Phase":    string(pod.Status.Phase),
-					"PodReady": podReady,
-					"Reason":   reason,
-					"Status":   waitingReason,
-					"Message":  waitingReasonMessage,
-				}
-
-				for _, event := range podEvents {
-					issue["EventMessage"] += event.Message + "\n"
-				}
-				podListIssue = append(podListIssue, issue)
-			}
-
-		case <-timeout:
-			return podList, podListIssue
-		}
-	}
 }
 
 func GetDeploymentList(kubeClient kubernetes.Interface, namespace string) ([][]string, []map[string]string, error) {
@@ -307,23 +92,10 @@ func deploymentNotHealthy(deployment *appsv1.Deployment) bool {
 	return availableReplicas < *desiredReplicas || unreadyReplicas > int32(maxUnreadyReplicas)
 }
 
-func ListNameSpaces(kubeClient kubernetes.Interface) (*corev1.NamespaceList, []string, error) {
-	namespaces, err := kubeClient.CoreV1().Namespaces().List(context.Background(), metav1.ListOptions{})
-	if err != nil {
-		err = fmt.Errorf("error getting namespoaces: %v\n", err)
-		return nil, nil, err
-	}
-	namespacesName := make([]string, 0)
-	for _, n := range namespaces.Items {
-		namespacesName = append(namespacesName, n.Name)
-	}
-	return namespaces, namespacesName, nil
-}
-
 func main() {
-	kubeConfigPath := getKubeConfigPath()
-	config := getKubeConfigFromFile(kubeConfigPath)
-	kubeContextsList := getKubeContexts(config)
+	kubeConfigPath := k8s.GetKubeConfigPath()
+	config := k8s.GetKubeConfigFromFile(kubeConfigPath)
+	kubeContextsList := k8s.GetKubeContexts(config)
 
 	var ctxChoice string
 	contextChoiceForm := charm.GetForm(
@@ -332,22 +104,28 @@ func main() {
 	err := contextChoiceForm.Run()
 	logger.ErrHandle(err)
 
-	switchKubeContext(ctxChoice, kubeConfigPath, config)
+	k8s.SwitchKubeContext(ctxChoice, kubeConfigPath, config)
 
-	kubeClient, err := createClient(kubeConfigPath)
-	_, nsName, err := ListNameSpaces(kubeClient)
+	kubeClient := k8s.CreateClient(kubeConfigPath)
+	kubeDynamicClient := k8s.CreateDynamicClient(kubeConfigPath)
+
+	nsList := k8s.GetNamespacesList(kubeClient)
 
 	var nsChoice string
 	nsChoiceForm := charm.GetForm(
-		huh.NewSelect[string]().Title("Kubernetes Namespace").Description("Please choose a namespace to operate in").Options(charm.CreateOptionsFromStrings(nsName)...).Value(&nsChoice),
+		huh.NewSelect[string]().Title("Kubernetes Namespace").Description("Please choose a namespace to operate in").Options(charm.CreateOptionsFromStrings(func(nsList *corev1.NamespaceList) []string {
+			nsName := make([]string, 0)
+			for _, ns := range nsList.Items {
+				nsName = append(nsName, ns.Name)
+			}
+			return nsName
+		}(nsList))...).Value(&nsChoice),
 	)
 	err = nsChoiceForm.Run()
 	logger.ErrHandle(err)
 	nsChoiceForm.View()
 
-	switchKubeContextNamespace(ctxChoice, kubeConfigPath, nsChoice, config)
-
-	kubeDynamicClient, err := createDynamicClient(kubeConfigPath)
+	k8s.SwitchKubeContextNamespace(ctxChoice, kubeConfigPath, nsChoice, config)
 
 	Es := customresource.GetCRD("externalsecret", "", "", "")
 	Ks := customresource.GetCRD("kustomization", "", "", "")
@@ -361,12 +139,12 @@ func main() {
 	Hc.AnalyzeCRStatus(kubeDynamicClient, kubeClient, nsChoice)
 	Hr.AnalyzeCRStatus(kubeDynamicClient, kubeClient, nsChoice)
 
-	podList, podListIssue := getPodListErrors(kubeClient, nsChoice)
+	podList, podListIssue := k8s.GetPodListErrors(kubeClient, nsChoice)
 	if podList != nil {
 		charm.CreateObjectArray(podList, []string{"NAME", "PHASE", "PODREADY", "INIT", "SCHEDULED", "CTRREADY", "REASON", "STATUS"})
 	}
 	if len(podListIssue) > 0 {
-		logger.Logger.Error("ISSUE DETECTED")
+		logger.Logger.Error("ISSUE DETECTED", "kind", "Pod")
 		for _, pb := range podListIssue {
 			logger.Logger.Error("Unsynced/NotReady", "name", pb["Name"], "ready", pb["PodReady"], "status", pb["Status"], "errors", pb["EventMessage"])
 			fmt.Println("")

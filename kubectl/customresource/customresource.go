@@ -21,9 +21,7 @@ type CustomResourceDefinition interface {
 	getVersion() string
 	setKind(kind string)
 	getKind() string
-	setSuccessCondition(successCondition string)
 	getSuccessCondition() string
-	setPrettyName(prettyName string)
 	getPrettyName() string
 	GetCRList(kubeClient dynamic.Interface, kubeStaticClient kubernetes.Interface, namespace string) ([][]string, []map[string]string)
 	DisplayCRIssue(CRListIssue []map[string]string)
@@ -60,15 +58,9 @@ func (cr *CustomResource) setKind(kind string) {
 func (cr *CustomResource) getKind() string {
 	return cr.kind
 }
-func (cr *CustomResource) setSuccessCondition(successCondition string) {
-	cr.successCondition = successCondition
-}
 
 func (cr *CustomResource) getSuccessCondition() string {
 	return cr.successCondition
-}
-func (cr *CustomResource) setPrettyName(prettyName string) {
-	cr.prettyName = prettyName
 }
 
 func (cr *CustomResource) getPrettyName() string {
@@ -275,7 +267,7 @@ func (cr *CustomResource) GetCRList(kubeDynamicClient dynamic.Interface, kubeSta
 					CRList = append(CRList, row)
 
 					if reason != cr.getSuccessCondition() {
-						CREvents := k8s.GetEventsFromResource(kubeStaticClient, cr.getPrettyName(), namespace, custom.Object["metadata"].(map[string]interface{})["name"].(string))
+						CREvents := k8s.GetWarningEventsFromResource(kubeStaticClient, cr.getPrettyName(), namespace, custom.Object["metadata"].(map[string]interface{})["name"].(string))
 						issue := map[string]string{
 							"Name":    custom.Object["metadata"].(map[string]interface{})["name"].(string),
 							"Status":  reason,
