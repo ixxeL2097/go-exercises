@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"lambda/logger"
+	"lambda/requests"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,12 +22,6 @@ import (
 	"k8s.io/client-go/tools/clientcmd/api"
 	"k8s.io/kubectl/pkg/scheme"
 )
-
-type ModifyRequest struct {
-	Path      []string    // chemin dans l'objet (ex: []string{"spec", "template", "spec"})
-	Value     interface{} // valeur à mettre (peut être map[string]string, string, int, etc)
-	Operation string      // "update", "merge", "delete" par exemple
-}
 
 func GetKubeConfigPath() string {
 	userHomeDir, err := os.UserHomeDir()
@@ -94,31 +89,11 @@ func CreateDynamicClient(kubeConfigPath string) dynamic.Interface {
 	return dynamicClient
 }
 
-// func GetGVKFromObject(obj runtime.Object, restMapper meta.RESTMapper) (schema.GroupVersionKind, error) {
-// 	gvks, _, err := scheme.Scheme.ObjectKinds(obj)
-// 	logger.ErrHandle(err)
-// 	return gvks[0], nil
-// }
-
 func GetGVKFromObject(obj runtime.Object) schema.GroupVersionKind {
 	gvks, _, err := scheme.Scheme.ObjectKinds(obj)
 	logger.ErrHandle(err)
 	return gvks[0]
 }
-
-// func GetGVKFromObject(obj runtime.Object, restMapper meta.RESTMapper) (schema.GroupVersionKind, error) {
-// 	// Récupérer les metadonnées de l'objet
-// 	accessor, err := meta.Accessor(obj)
-// 	logger.ErrHandle(err)
-
-// 	// Créer un GVR (GroupVersionResource) à partir du nom
-// 	gvk, err := restMapper.KindFor(schema.GroupVersionResource{
-// 		Resource: strings.ToLower(accessor.GetName()),
-// 	})
-// 	logger.ErrHandle(err)
-// 	fmt.Println(gvk)
-// 	return gvk, nil
-// }
 
 func GetDeployment(deploymentName string, namespace string, kubeClient kubernetes.Interface) *appsv1.Deployment {
 	// restMapper := restmapper.NewDeferredDiscoveryRESTMapper(memory.NewMemCacheClient(kubeClient.Discovery()))
@@ -250,7 +225,7 @@ func GetWarningEventsFromResource(kubeClient kubernetes.Interface, resourceKind 
 	return warningEvents
 }
 
-func UpdateResource(ctx context.Context, dynamicClient dynamic.Interface, obj runtime.Object, modifyRequest ModifyRequest) {
+func UpdateResource(ctx context.Context, dynamicClient dynamic.Interface, obj runtime.Object, modifyRequest requests.ModifyRequest) {
 	metaObj, ok := obj.(metav1.Object)
 	if !ok {
 		fmt.Errorf("object does not implement metav1.Object")
