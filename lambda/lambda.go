@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"lambda/k8s"
 	"lambda/logger"
 	"lambda/server"
@@ -27,7 +26,7 @@ func main() {
 		port = "8080"
 	}
 
-	fmt.Printf("Starting server on port :%s\n", port)
+	logger.Logger.Debug("Starting server on port", "port", port)
 	err := http.ListenAndServe(":"+port, mux)
 	logger.ErrHandle(err)
 }
