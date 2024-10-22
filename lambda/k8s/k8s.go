@@ -157,7 +157,15 @@ func CreateKubeClient(kubeConfigPath string, clientType string) (interface{}, er
 
 func GetGVKFromObject(obj runtime.Object) (schema.GroupVersionKind, error) {
 	gvks, _, err := scheme.Scheme.ObjectKinds(obj)
-	return gvks[0], err
+	if err != nil {
+		logger.Logger.Error("Failed loading GVK from object", "obj", obj, "error", err)
+		return schema.GroupVersionKind{}, err
+	}
+	if len(gvks) == 0 {
+		logger.Logger.Error("No GVK found for object", "obj", obj, "error", err)
+		return schema.GroupVersionKind{}, err
+	}
+	return gvks[0], nil
 }
 
 func GetDeployment(deploymentName string, namespace string, kubeClient kubernetes.Interface) (*appsv1.Deployment, error) {
@@ -166,13 +174,13 @@ func GetDeployment(deploymentName string, namespace string, kubeClient kubernete
 	deploy, err := deployClient.Get(context.Background(), deploymentName, metav1.GetOptions{})
 	if err != nil {
 		logger.Logger.Error("Failed getting deployment", "deploy", deploymentName, "namespace", namespace, "error", err)
-		return nil, fmt.Errorf("failed to get deployment %s in namespace %s: %w", deploymentName, namespace, err)
+		return nil, err
 	}
 
 	gvk, err := GetGVKFromObject(deploy)
 	if err != nil {
-		logger.Logger.Error("Failed loading GVK from object", "deploy", deploymentName, "namespace", namespace, "error", err)
-		return nil, fmt.Errorf("failed to load GVK from deployment %s: %w", deploymentName, err)
+		logger.Logger.Error("Failed to inject GVK", "deploy", deploymentName, "namespace", namespace, "error", err)
+		return nil, err
 	}
 	deploy.SetGroupVersionKind(gvk)
 
@@ -182,7 +190,8 @@ func GetDeployment(deploymentName string, namespace string, kubeClient kubernete
 func GetDeploymentsList(namespace string, kubeClient kubernetes.Interface) (*appsv1.DeploymentList, error) {
 	deploys, err := kubeClient.AppsV1().Deployments(namespace).List(context.Background(), metav1.ListOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to list deployments in namespace %s: %w", namespace, err)
+		logger.Logger.Error("Failed getting deployment list", "namespace", namespace, "error", err)
+		return nil, err
 	}
 	return deploys, nil
 }
@@ -190,7 +199,8 @@ func GetDeploymentsList(namespace string, kubeClient kubernetes.Interface) (*app
 func GetPodsList(namespace string, kubeClient kubernetes.Interface) (*corev1.PodList, error) {
 	pods, err := kubeClient.CoreV1().Pods(namespace).List(context.Background(), metav1.ListOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to list pods in namespace %s: %w", namespace, err)
+		logger.Logger.Error("Failed getting pods list", "namespace", namespace, "error", err)
+		return nil, err
 	}
 	return pods, nil
 }
@@ -198,7 +208,8 @@ func GetPodsList(namespace string, kubeClient kubernetes.Interface) (*corev1.Pod
 func GetNamespacesList(kubeClient kubernetes.Interface) (*corev1.NamespaceList, error) {
 	namespaces, err := kubeClient.CoreV1().Namespaces().List(context.Background(), metav1.ListOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to list namespaces : %w", err)
+		logger.Logger.Error("Failed listing namespaces", "error", err)
+		return nil, err
 	}
 	return namespaces, nil
 }
@@ -318,19 +329,22 @@ func UpdateResource(ctx context.Context, dynamicClient dynamic.Interface, obj ru
 
 	liveObject, err := dynamicClient.Resource(gvr).Namespace(metaObj.GetNamespace()).Get(ctx, metaObj.GetName(), metav1.GetOptions{})
 	if err != nil {
-		return fmt.Errorf("failed to get live object: %w", err)
+		logger.Logger.Error("Failed to get live object", "object", metaObj.GetName(), "namespace", metaObj.GetNamespace(), "error", err)
+		return err
 	}
 
 	switch modifyRequest.Operation {
 	case "update":
 		if err := unstructured.SetNestedField(liveObject.Object, modifyRequest.Value, modifyRequest.Path...); err != nil {
-			return fmt.Errorf("failed to update field: %w", err)
+			logger.Logger.Error("Failed to update field", "value", modifyRequest.Value, "path", modifyRequest.Path, "error", err)
+			return err
 		}
 
 	case "merge":
 		currentMap, found, err := unstructured.NestedMap(liveObject.Object, modifyRequest.Path...)
 		if err != nil {
-			return fmt.Errorf("failed to retrieve current nested map: %w", err)
+			logger.Logger.Error("Failed to retrieve current nested map", "path", modifyRequest.Path, "error", err)
+			return err
 		}
 		if found {
 			updateMap, ok := modifyRequest.Value.(map[string]string)
@@ -339,12 +353,15 @@ func UpdateResource(ctx context.Context, dynamicClient dynamic.Interface, obj ru
 					currentMap[k] = v
 				}
 				if err := unstructured.SetNestedField(liveObject.Object, modifyRequest.Value, modifyRequest.Path...); err != nil {
-					return fmt.Errorf("failed to set nested field: %w", err)
+					logger.Logger.Error("Failed to set nested field", "path", modifyRequest.Path, "error", err)
+					return err
 				}
 			}
 		} else {
-			err := unstructured.SetNestedField(liveObject.Object, modifyRequest.Value, modifyRequest.Path...)
-			logger.ErrHandle(err)
+			if err := unstructured.SetNestedField(liveObject.Object, modifyRequest.Value, modifyRequest.Path...); err != nil {
+				logger.Logger.Error("Failed to set nested field", "path", modifyRequest.Path, "error", err)
+				return err
+			}
 		}
 
 	// case "delete":
@@ -355,7 +372,8 @@ func UpdateResource(ctx context.Context, dynamicClient dynamic.Interface, obj ru
 	}
 
 	if _, err := dynamicClient.Resource(gvr).Namespace(metaObj.GetNamespace()).Update(ctx, liveObject, metav1.UpdateOptions{}); err != nil {
-		return fmt.Errorf("failed to update live object: %w", err)
+		logger.Logger.Error("Failed to update live object", "object", liveObject, "error", err)
+		return err
 	}
 	return nil
 }

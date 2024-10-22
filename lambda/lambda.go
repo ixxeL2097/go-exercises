@@ -16,11 +16,11 @@ func main() {
 	kubeConfigPath := k8s.GetKubeConfigPath()
 	kubeClient, err := k8s.CreateKubeClient(kubeConfigPath, "static")
 	if err != nil {
-		logger.Logger.Error("Failed to create static kube client", err)
+		logger.Logger.Fatal("Error creating static kube client", err)
 	}
 	kubeDynamicClient, err := k8s.CreateKubeClient(kubeConfigPath, "dynamic")
 	if err != nil {
-		logger.Logger.Error("Failed to create dynamic kube client", err)
+		logger.Logger.Fatal("Error creating dynamic kube client", err)
 	}
 
 	apiHandler := &server.APIHandler{
