@@ -20,14 +20,23 @@ type APIHandler struct {
 
 func (h *APIHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
+	case "/":
+		h.HomePage(w, r)
 	case "/v1/deployments/restart":
-		h.handleRestartDeployment(w, r)
+		h.HandleRestartDeployment(w, r)
 	default:
 		http.NotFound(w, r)
 	}
 }
 
-func (h *APIHandler) handleRestartDeployment(w http.ResponseWriter, r *http.Request) {
+func (h *APIHandler) HomePage(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	w.Header().Set("Content-Type", "text/html")
+	fmt.Fprintln(w, "<h1>Welcome to lambda Application!</h1>")
+}
+
+func (h *APIHandler) HandleRestartDeployment(w http.ResponseWriter, r *http.Request) {
+	logger.Logger.Info("Processing deployment restart request")
 	if r.Method != http.MethodPost {
 		http.Error(w, "Only POST method is allowed", http.StatusMethodNotAllowed)
 		logger.Logger.Error("Wrong API HTTP method", "method", r.Method)
@@ -38,6 +47,7 @@ func (h *APIHandler) handleRestartDeployment(w http.ResponseWriter, r *http.Requ
 		Deploy    string `json:"deploy"`
 		Namespace string `json:"namespace"`
 	}
+
 	err := json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
 		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
@@ -50,14 +60,20 @@ func (h *APIHandler) handleRestartDeployment(w http.ResponseWriter, r *http.Requ
 		logger.Logger.Error("Missing deployment name in request")
 		return
 	}
+	logger.Logger.Info("Restarting deployment", "deployment", req.Deploy, "namespace", req.Namespace)
 
 	deployment, err := k8s.GetDeployment(req.Deploy, req.Namespace, h.KubeClient)
 	if err != nil {
-		logger.Logger.Error("Error modifying deployment", "deploy", req.Deploy, "error", err)
+		logger.Logger.Error("Error getting deployment", "deploy", req.Deploy, "error", err)
+		http.Error(w, fmt.Sprintf("Error getting deployment: %v", err), http.StatusInternalServerError)
+		return
 	}
+	logger.Logger.Info("Updating resource", "deployment", req.Deploy, "namespace", req.Namespace)
 
 	if err := k8s.UpdateResource(context.Background(), h.KubeDynamicClient, deployment, requests.RESTART_DEPLOY()); err != nil {
 		logger.Logger.Error("Error updating resource", "resource", deployment, "error", err)
+		http.Error(w, fmt.Sprintf("Error updating resource: %v", err), http.StatusInternalServerError)
+		return
 	}
 
 	w.WriteHeader(http.StatusOK)

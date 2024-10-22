@@ -23,10 +23,27 @@ tasks:
                             --build-arg GOINSECURE="golang.org,google.golang.org,gopkg.in,k8s.io,sum.golang.org,sigs.k8s.io" \
                             -t lambda:{{ .TAG }} ./lambda
 
-  run:
-    desc: run the server locally
+  push:
+    desc: Build docker image for lambda microservice
+    vars:
+      TAG: '{{ .TAG | default "test" }}'
+    cmds:
+      - |
+        docker tag lambda:{{ .TAG }} ixxel/lambda:{{ .TAG }}
+        docker push ixxel/lambda:{{ .TAG }}
+
+  run:docker:
+    desc: run the server locally with Docker
     vars:
       PORT: '{{ .PORT | default "8081" }}'
       TAG: '{{ .TAG | default "test" }}'
     cmds:
-    - docker run -d -e APP_PORT={{ .PORT }} -p {{ .PORT }}:{{ .PORT }} lambda:{{ .TAG }}
+    - docker run --name lambda -d -e APP_PORT={{ .PORT }} -p {{ .PORT }}:{{ .PORT }} lambda:{{ .TAG }}
+
+  run:local:
+    desc: run the server locally
+    vars:
+      PORT: '{{ .PORT | default "8081" }}'
+    cmds:
+    - go -C ./lambda mod tidy
+    - go -C ./lambda run lambda.go

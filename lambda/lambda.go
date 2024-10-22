@@ -28,6 +28,7 @@ func main() {
 		KubeDynamicClient: kubeDynamicClient.(dynamic.Interface),
 	}
 	mux := http.NewServeMux()
+	mux.Handle("/", apiHandler)
 	mux.Handle("/v1/deployments/restart", apiHandler)
 
 	port := os.Getenv("APP_PORT")

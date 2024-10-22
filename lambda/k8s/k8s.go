@@ -326,36 +326,41 @@ func UpdateResource(ctx context.Context, dynamicClient dynamic.Interface, obj ru
 		Version:  gvk.Version,
 		Resource: strings.ToLower(gvk.Kind) + "s",
 	}
+	logger.Logger.Debug("GVK acquired", "group", gvk.Group, "version", gvk.Version, "kind", gvk.Kind)
 
 	liveObject, err := dynamicClient.Resource(gvr).Namespace(metaObj.GetNamespace()).Get(ctx, metaObj.GetName(), metav1.GetOptions{})
 	if err != nil {
 		logger.Logger.Error("Failed to get live object", "object", metaObj.GetName(), "namespace", metaObj.GetNamespace(), "error", err)
 		return err
 	}
+	logger.Logger.Debug("Live object acquired", "name", metaObj.GetName(), "namespace", metaObj.GetNamespace(), "object", liveObject.Object)
 
 	switch modifyRequest.Operation {
 	case "update":
+		logger.Logger.Debug("Update required", "value", modifyRequest.Value, "path", modifyRequest.Path)
 		if err := unstructured.SetNestedField(liveObject.Object, modifyRequest.Value, modifyRequest.Path...); err != nil {
 			logger.Logger.Error("Failed to update field", "value", modifyRequest.Value, "path", modifyRequest.Path, "error", err)
 			return err
 		}
-
 	case "merge":
+		logger.Logger.Debug("Merge required", "value", modifyRequest.Value, "path", modifyRequest.Path)
 		currentMap, found, err := unstructured.NestedMap(liveObject.Object, modifyRequest.Path...)
 		if err != nil {
 			logger.Logger.Error("Failed to retrieve current nested map", "path", modifyRequest.Path, "error", err)
 			return err
 		}
+		updateMap, ok := modifyRequest.Value.(map[string]string)
+		if !ok {
+			logger.Logger.Error("modifyRequest.Value is not a map[string]string", "value", modifyRequest.Value)
+			return err
+		}
 		if found {
-			updateMap, ok := modifyRequest.Value.(map[string]string)
-			if ok {
-				for k, v := range updateMap {
-					currentMap[k] = v
-				}
-				if err := unstructured.SetNestedField(liveObject.Object, modifyRequest.Value, modifyRequest.Path...); err != nil {
-					logger.Logger.Error("Failed to set nested field", "path", modifyRequest.Path, "error", err)
-					return err
-				}
+			for k, v := range updateMap {
+				currentMap[k] = v
+			}
+			if err := unstructured.SetNestedField(liveObject.Object, currentMap, modifyRequest.Path...); err != nil {
+				logger.Logger.Error("Failed to set nested field", "path", modifyRequest.Path, "error", err)
+				return err
 			}
 		} else {
 			if err := unstructured.SetNestedField(liveObject.Object, modifyRequest.Value, modifyRequest.Path...); err != nil {

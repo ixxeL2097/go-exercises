@@ -1,0 +1,88 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: lambda
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lambda
+  labels:
+    app: lambda
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: lambda
+  template:
+    metadata:
+      labels:
+        app: lambda
+    spec:
+      serviceAccountName: lambda
+      automountServiceAccountToken: true
+      containers:
+      - name: lambda
+        image: ixxel/lambda:test
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8081
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: lambda
+spec:
+  type: ClusterIP
+  selector:
+    app: lambda
+  ports:
+  - protocol: TCP
+    port: 8081
+    targetPort: 8081
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  annotations:
+    cert-manager.io/cluster-issuer: vault-issuer
+    cert-manager.io/common-name: lambda.k8s-app.fredcorp.com
+  name: lambda
+spec:
+  ingressClassName: cilium
+  rules:
+  - host: lambda.k8s-app.fredcorp.com
+    http:
+      paths:
+      - backend:
+          service:
+            name: lambda
+            port:
+              number: 8081
+        path: /
+        pathType: Prefix
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: lambda
+rules:
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: lambda
+subjects:
+- kind: ServiceAccount
+  name: lambda
+  namespace: gitlab-runner
+roleRef:
+  kind: Role
+  name: lambda
+  apiGroup: rbac.authorization.k8s.io
+
+

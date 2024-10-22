@@ -5,16 +5,17 @@ import (
 )
 
 type ModifyRequest struct {
-	Path      []string    // chemin dans l'objet (ex: []string{"spec", "template", "spec"})
-	Value     interface{} // valeur à mettre (peut être map[string]string, string, int, etc)
-	Operation string      // "update", "merge", "delete" par exemple
+	Path      []string
+	Value     interface{}
+	Operation string
 }
 
 func RESTART_DEPLOY() ModifyRequest {
+	time := time.Now().Format(time.RFC3339)
 	return ModifyRequest{
 		Path: []string{"spec", "template", "metadata", "annotations"},
 		Value: map[string]string{
-			"kubectl.kubernetes.io/restartedAt": time.Now().Format(time.RFC3339),
+			"kubectl.kubernetes.io/restartedAt": time,
 		},
 		Operation: "merge",
 	}
