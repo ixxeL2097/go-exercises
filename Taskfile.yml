@@ -27,10 +27,11 @@ tasks:
     desc: Build docker image for lambda microservice
     vars:
       TAG: '{{ .TAG | default "test" }}'
+      REGISTRY: '{{ .REGISTRY | default "ixxel" }}'
     cmds:
       - |
-        docker tag lambda:{{ .TAG }} ixxel/lambda:{{ .TAG }}
-        docker push ixxel/lambda:{{ .TAG }}
+        docker tag lambda:{{ .TAG }} {{ .REGISTRY }}/lambda:{{ .TAG }}
+        docker push {{ .REGISTRY }}/lambda:{{ .TAG }}
 
   run:docker:
     desc: run the server locally with Docker

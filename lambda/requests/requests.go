@@ -10,7 +10,7 @@ type ModifyRequest struct {
 	Operation string
 }
 
-func RESTART_DEPLOY() ModifyRequest {
+func GetRestartDeploymentAnnotations() ModifyRequest {
 	time := time.Now().Format(time.RFC3339)
 	return ModifyRequest{
 		Path: []string{"spec", "template", "metadata", "annotations"},

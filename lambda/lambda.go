@@ -2,43 +2,35 @@ package main
 
 import (
 	"lambda/k8s"
-	"lambda/logger"
 	"lambda/server"
-	"net/http"
 	"os"
 
+	log "github.com/sirupsen/logrus"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 )
 
 func main() {
-
 	kubeConfigPath := k8s.GetKubeConfigPath()
+
 	kubeClient, err := k8s.CreateKubeClient(kubeConfigPath, "static")
 	if err != nil {
-		logger.Logger.Fatal("Error creating static kube client", err)
+		log.Fatal("Error creating static kube client ", err)
 	}
 	kubeDynamicClient, err := k8s.CreateKubeClient(kubeConfigPath, "dynamic")
 	if err != nil {
-		logger.Logger.Fatal("Error creating dynamic kube client", err)
+		log.Fatal("Error creating dynamic kube client ", err)
 	}
 
-	apiHandler := &server.APIHandler{
-		KubeClient:        kubeClient.(kubernetes.Interface),
-		KubeDynamicClient: kubeDynamicClient.(dynamic.Interface),
-	}
-	mux := http.NewServeMux()
-	mux.Handle("/", apiHandler)
-	mux.Handle("/v1/deployments/restart", apiHandler)
+	router := server.NewRouter(kubeClient.(kubernetes.Interface), kubeDynamicClient.(dynamic.Interface))
 
 	port := os.Getenv("APP_PORT")
 	if port == "" {
 		port = "8081"
 	}
 
-	logger.Logger.Info("Starting server on port", "port", port)
-	err = http.ListenAndServe(":"+port, mux)
-	if err != nil {
-		logger.Logger.Fatalf("Failed to serve on port %v : %v", port, err)
+	log.Infof("Starting server on port %v", port)
+	if err := router.Run(":" + port); err != nil {
+		log.Fatalf("Failed to serve on port %v : %v", port, err)
 	}
 }
