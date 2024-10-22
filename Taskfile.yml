@@ -3,7 +3,15 @@
 version: "3"
 
 tasks:
-  build-lambda:
+  build:
+    desc: Build docker image for lambda microservice
+    vars:
+      TAG: '{{ .TAG | default "test" }}'
+    cmds:
+      - |
+        docker buildx build --no-cache \
+                            -t lambda:{{ .TAG }} ./lambda
+  build:proxy:
     desc: Build docker image for lambda microservice
     vars:
       TAG: '{{ .TAG | default "test" }}'

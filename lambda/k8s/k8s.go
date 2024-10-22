@@ -23,17 +23,32 @@ import (
 	"k8s.io/kubectl/pkg/scheme"
 )
 
+func PathExists(path string) (bool, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, err
+		} else {
+			return false, err
+		}
+	}
+	return !info.IsDir(), nil
+}
+
 func GetKubeConfigPath() string {
 	userHomeDir, err := os.UserHomeDir()
-	logger.ErrHandle(err)
-
+	if err != nil {
+		logger.Logger.Warn("fail", err)
+	}
 	kubeConfigPath := filepath.Join(userHomeDir, ".kube", "config")
 	return kubeConfigPath
 }
 
 func GetKubeConfigFromFile(kubeConfigPath string) *api.Config {
 	config, err := clientcmd.LoadFromFile(kubeConfigPath)
-	logger.ErrHandle(err)
+	if err != nil {
+		logger.Logger.Error("fail", err)
+	}
 	return config
 }
 
@@ -48,84 +63,144 @@ func GetKubeContexts(config *api.Config) []string {
 func SwitchKubeContext(context string, kubeConfigPath string, config *api.Config) {
 	config.CurrentContext = context
 	err := clientcmd.WriteToFile(*config, kubeConfigPath)
-	logger.ErrHandle(err)
+	if err != nil {
+		logger.Logger.Fatal("critical", err)
+	}
 }
 
 func SwitchKubeContextNamespace(context string, kubeConfigPath string, namespace string, config *api.Config) {
 	config.Contexts[context].Namespace = namespace
 	err := clientcmd.WriteToFile(*config, kubeConfigPath)
-	logger.ErrHandle(err)
-}
-
-func CreateClient(kubeConfigPath string) kubernetes.Interface {
-	var kubeConfig *rest.Config
-	if kubeConfigPath != "" {
-		config, err := clientcmd.BuildConfigFromFlags("", kubeConfigPath)
-		logger.ErrHandle(err)
-		kubeConfig = config
-	} else {
-		config, err := rest.InClusterConfig()
-		logger.ErrHandle(err)
-		kubeConfig = config
+	if err != nil {
+		logger.Logger.Fatal("critical", err)
 	}
-	client, err := kubernetes.NewForConfig(kubeConfig)
-	logger.ErrHandle(err)
-	return client
 }
 
-func CreateDynamicClient(kubeConfigPath string) dynamic.Interface {
+func CreateKubeClient(kubeConfigPath string, clientType string) (interface{}, error) {
 	var kubeConfig *rest.Config
-	if kubeConfigPath != "" {
-		config, err := clientcmd.BuildConfigFromFlags("", kubeConfigPath)
-		logger.ErrHandle(err)
-		kubeConfig = config
+	if _, err := PathExists(kubeConfigPath); err != nil {
+		logger.Logger.Info("Loading in-cluster kube config")
+		kubeConfig, err = rest.InClusterConfig()
+		if err != nil {
+			logger.Logger.Error("Failed to load in-cluster kube config", err)
+			return nil, err
+		}
 	} else {
-		config, err := rest.InClusterConfig()
-		logger.ErrHandle(err)
-		kubeConfig = config
+		logger.Logger.Info("Loading kube config", "kubeconfig", kubeConfigPath)
+		kubeConfig, err = clientcmd.BuildConfigFromFlags("", kubeConfigPath)
+		if err != nil {
+			logger.Logger.Error("Failed to load kube config from path", err)
+			return nil, err
+		}
 	}
-	dynamicClient, err := dynamic.NewForConfig(kubeConfig)
-	logger.ErrHandle(err)
-	return dynamicClient
+	switch clientType {
+	case "static":
+		logger.Logger.Info("Creating static kube client")
+		client, err := kubernetes.NewForConfig(kubeConfig)
+		if err != nil {
+			return nil, err
+		}
+		return client, nil
+	case "dynamic":
+		logger.Logger.Info("Creating dynamic kube client")
+		dynamicClient, err := dynamic.NewForConfig(kubeConfig)
+		if err != nil {
+			return nil, err
+		}
+		return dynamicClient, nil
+	default:
+		return nil, fmt.Errorf("unknown client type: %s", clientType)
+	}
 }
 
-func GetGVKFromObject(obj runtime.Object) schema.GroupVersionKind {
+// func CreateClient(kubeConfigPath string) (kubernetes.Interface, error) {
+// 	var kubeConfig *rest.Config
+// 	if _, err := PathExists(kubeConfigPath); err != nil {
+// 		logger.Logger.Info("Loading in cluster kube config")
+// 		config, err := rest.InClusterConfig()
+// 		if err != nil {
+// 			logger.Logger.Error("fail", err)
+// 		}
+// 		kubeConfig = config
+// 	} else {
+// 		logger.Logger.Info("Loading kube config", "kubeconfig", kubeConfigPath)
+// 		config, err := clientcmd.BuildConfigFromFlags("", kubeConfigPath)
+// 		if err != nil {
+// 			logger.Logger.Error("fail", err)
+// 		}
+// 		kubeConfig = config
+// 	}
+// 	client, err := kubernetes.NewForConfig(kubeConfig)
+// 	return client, err
+// }
+
+// func CreateDynamicClient(kubeConfigPath string) (dynamic.Interface, error) {
+// 	var kubeConfig *rest.Config
+// 	if _, err := PathExists(kubeConfigPath); err != nil {
+// 		logger.Logger.Info("Loading in cluster kube config")
+// 		config, err := rest.InClusterConfig()
+// 		if err != nil {
+// 			logger.Logger.Error("fail", err)
+// 		}
+// 		kubeConfig = config
+// 	} else {
+// 		logger.Logger.Info("Loading kube config", "kubeconfig", kubeConfigPath)
+// 		config, err := clientcmd.BuildConfigFromFlags("", kubeConfigPath)
+// 		if err != nil {
+// 			logger.Logger.Error("fail", err)
+// 		}
+// 		kubeConfig = config
+// 	}
+// 	dynamicClient, err := dynamic.NewForConfig(kubeConfig)
+// 	return dynamicClient, err
+// }
+
+func GetGVKFromObject(obj runtime.Object) (schema.GroupVersionKind, error) {
 	gvks, _, err := scheme.Scheme.ObjectKinds(obj)
-	logger.ErrHandle(err)
-	return gvks[0]
+	return gvks[0], err
 }
 
-func GetDeployment(deploymentName string, namespace string, kubeClient kubernetes.Interface) *appsv1.Deployment {
-	// restMapper := restmapper.NewDeferredDiscoveryRESTMapper(memory.NewMemCacheClient(kubeClient.Discovery()))
-
+func GetDeployment(deploymentName string, namespace string, kubeClient kubernetes.Interface) (*appsv1.Deployment, error) {
 	deployClient := kubeClient.AppsV1().Deployments(namespace)
-	deploy, err := deployClient.Get(context.Background(), deploymentName, metav1.GetOptions{})
-	logger.ErrHandle(err)
 
-	// gvk, err := GetGVKFromObject(deploy, restMapper)
-	gvk := GetGVKFromObject(deploy)
-	logger.ErrHandle(err)
+	deploy, err := deployClient.Get(context.Background(), deploymentName, metav1.GetOptions{})
+	if err != nil {
+		logger.Logger.Error("Failed getting deployment", "deploy", deploymentName, "namespace", namespace, "error", err)
+		return nil, fmt.Errorf("failed to get deployment %s in namespace %s: %w", deploymentName, namespace, err)
+	}
+
+	gvk, err := GetGVKFromObject(deploy)
+	if err != nil {
+		logger.Logger.Error("Failed loading GVK from object", "deploy", deploymentName, "namespace", namespace, "error", err)
+		return nil, fmt.Errorf("failed to load GVK from deployment %s: %w", deploymentName, err)
+	}
 	deploy.SetGroupVersionKind(gvk)
 
-	return deploy
+	return deploy, nil
 }
 
-func GetDeploymentsList(namespace string, kubeClient kubernetes.Interface) *appsv1.DeploymentList {
+func GetDeploymentsList(namespace string, kubeClient kubernetes.Interface) (*appsv1.DeploymentList, error) {
 	deploys, err := kubeClient.AppsV1().Deployments(namespace).List(context.Background(), metav1.ListOptions{})
-	logger.ErrHandle(err)
-	return deploys
+	if err != nil {
+		return nil, fmt.Errorf("failed to list deployments in namespace %s: %w", namespace, err)
+	}
+	return deploys, nil
 }
 
-func GetPodsList(namespace string, kubeClient kubernetes.Interface) *corev1.PodList {
+func GetPodsList(namespace string, kubeClient kubernetes.Interface) (*corev1.PodList, error) {
 	pods, err := kubeClient.CoreV1().Pods(namespace).List(context.Background(), metav1.ListOptions{})
-	logger.ErrHandle(err)
-	return pods
+	if err != nil {
+		return nil, fmt.Errorf("failed to list pods in namespace %s: %w", namespace, err)
+	}
+	return pods, nil
 }
 
-func GetNamespacesList(kubeClient kubernetes.Interface) *corev1.NamespaceList {
+func GetNamespacesList(kubeClient kubernetes.Interface) (*corev1.NamespaceList, error) {
 	namespaces, err := kubeClient.CoreV1().Namespaces().List(context.Background(), metav1.ListOptions{})
-	logger.ErrHandle(err)
-	return namespaces
+	if err != nil {
+		return nil, fmt.Errorf("failed to list namespaces : %w", err)
+	}
+	return namespaces, nil
 }
 
 func GetPodStatuses(kubeClient kubernetes.Interface, namespace string, pod *corev1.Pod) (map[string]string, []corev1.Event) {
@@ -174,7 +249,10 @@ func GetPodStatuses(kubeClient kubernetes.Interface, namespace string, pod *core
 }
 
 func GetPodListErrors(kubeClient kubernetes.Interface, namespace string) ([][]string, []map[string]string) {
-	pods := GetPodsList(namespace, kubeClient)
+	pods, err := GetPodsList(namespace, kubeClient)
+	if err != nil {
+		logger.Logger.Error(err)
+	}
 
 	podList := make([][]string, 0)
 	podListIssue := make([]map[string]string, 0)
@@ -225,10 +303,10 @@ func GetWarningEventsFromResource(kubeClient kubernetes.Interface, resourceKind 
 	return warningEvents
 }
 
-func UpdateResource(ctx context.Context, dynamicClient dynamic.Interface, obj runtime.Object, modifyRequest requests.ModifyRequest) {
+func UpdateResource(ctx context.Context, dynamicClient dynamic.Interface, obj runtime.Object, modifyRequest requests.ModifyRequest) error {
 	metaObj, ok := obj.(metav1.Object)
 	if !ok {
-		fmt.Errorf("object does not implement metav1.Object")
+		return fmt.Errorf("object does not implement metav1.Object")
 	}
 
 	gvk := obj.GetObjectKind().GroupVersionKind()
@@ -239,23 +317,30 @@ func UpdateResource(ctx context.Context, dynamicClient dynamic.Interface, obj ru
 	}
 
 	liveObject, err := dynamicClient.Resource(gvr).Namespace(metaObj.GetNamespace()).Get(ctx, metaObj.GetName(), metav1.GetOptions{})
-	logger.ErrHandle(err)
+	if err != nil {
+		return fmt.Errorf("failed to get live object: %w", err)
+	}
 
 	switch modifyRequest.Operation {
 	case "update":
-		err := unstructured.SetNestedField(liveObject.Object, modifyRequest.Value, modifyRequest.Path...)
-		logger.ErrHandle(err)
+		if err := unstructured.SetNestedField(liveObject.Object, modifyRequest.Value, modifyRequest.Path...); err != nil {
+			return fmt.Errorf("failed to update field: %w", err)
+		}
 
 	case "merge":
-		currentMap, found, _ := unstructured.NestedMap(liveObject.Object, modifyRequest.Path...)
+		currentMap, found, err := unstructured.NestedMap(liveObject.Object, modifyRequest.Path...)
+		if err != nil {
+			return fmt.Errorf("failed to retrieve current nested map: %w", err)
+		}
 		if found {
 			updateMap, ok := modifyRequest.Value.(map[string]string)
 			if ok {
 				for k, v := range updateMap {
 					currentMap[k] = v
 				}
-				err := unstructured.SetNestedMap(liveObject.Object, currentMap, modifyRequest.Path...)
-				logger.ErrHandle(err)
+				if err := unstructured.SetNestedField(liveObject.Object, modifyRequest.Value, modifyRequest.Path...); err != nil {
+					return fmt.Errorf("failed to set nested field: %w", err)
+				}
 			}
 		} else {
 			err := unstructured.SetNestedField(liveObject.Object, modifyRequest.Value, modifyRequest.Path...)
@@ -266,9 +351,11 @@ func UpdateResource(ctx context.Context, dynamicClient dynamic.Interface, obj ru
 	// 	err = unstructured.RemoveNestedField(cr.Object, modifyRequest.Path...)
 
 	default:
-		fmt.Errorf("unknown operation: %s", modifyRequest.Operation)
+		return fmt.Errorf("unknown operation: %s", modifyRequest.Operation)
 	}
 
-	_, err = dynamicClient.Resource(gvr).Namespace(metaObj.GetNamespace()).Update(ctx, liveObject, metav1.UpdateOptions{})
-	logger.ErrHandle(err)
+	if _, err := dynamicClient.Resource(gvr).Namespace(metaObj.GetNamespace()).Update(ctx, liveObject, metav1.UpdateOptions{}); err != nil {
+		return fmt.Errorf("failed to update live object: %w", err)
+	}
+	return nil
 }

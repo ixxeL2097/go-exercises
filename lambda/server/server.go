@@ -30,6 +30,7 @@ func (h *APIHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (h *APIHandler) handleRestartDeployment(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Only POST method is allowed", http.StatusMethodNotAllowed)
+		logger.Logger.Error("Wrong API HTTP method", "method", r.Method)
 		return
 	}
 
@@ -38,16 +39,26 @@ func (h *APIHandler) handleRestartDeployment(w http.ResponseWriter, r *http.Requ
 		Namespace string `json:"namespace"`
 	}
 	err := json.NewDecoder(r.Body).Decode(&req)
-	logger.ErrHandle(err)
-
-	if req.Deploy == "" {
-		http.Error(w, "You should specify a deployment name", http.StatusBadRequest)
+	if err != nil {
+		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
+		logger.Logger.Error("Failed to decode JSON")
 		return
 	}
 
-	deployment := k8s.GetDeployment(req.Deploy, req.Namespace, h.KubeClient)
+	if req.Deploy == "" {
+		http.Error(w, "You should specify a deployment name", http.StatusBadRequest)
+		logger.Logger.Error("Missing deployment name in request")
+		return
+	}
 
-	k8s.UpdateResource(context.Background(), h.KubeDynamicClient, deployment, requests.RESTART_DEPLOY())
+	deployment, err := k8s.GetDeployment(req.Deploy, req.Namespace, h.KubeClient)
+	if err != nil {
+		logger.Logger.Error("Error modifying deployment", "deploy", req.Deploy, "error", err)
+	}
+
+	if err := k8s.UpdateResource(context.Background(), h.KubeDynamicClient, deployment, requests.RESTART_DEPLOY()); err != nil {
+		logger.Logger.Error("Error updating resource", "resource", deployment, "error", err)
+	}
 
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(fmt.Sprintf("Deployment %s restarted successfully", req.Deploy)))
