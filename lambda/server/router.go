@@ -11,6 +11,7 @@ import (
 )
 
 func NewRouter(kubeClient kubernetes.Interface, kubeDynamicClient dynamic.Interface) *gin.Engine {
+	gin.ForceConsoleColor()
 	router := gin.Default()
 	router.SetTrustedProxies(nil)
 	router.Use(gzip.Gzip(gzip.DefaultCompression))

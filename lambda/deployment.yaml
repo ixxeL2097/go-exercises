@@ -28,6 +28,9 @@ spec:
         imagePullPolicy: Always
         ports:
         - containerPort: 8081
+        env:
+          - name: FORCE_LOG_COLORS
+            value: "true"
 ---
 apiVersion: v1
 kind: Service

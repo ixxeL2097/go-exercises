@@ -2,6 +2,7 @@ package main
 
 import (
 	"lambda/k8s"
+	"lambda/logger"
 	"lambda/server"
 	"os"
 
@@ -11,6 +12,7 @@ import (
 )
 
 func main() {
+	logger.InitLogger()
 	kubeConfigPath := k8s.GetKubeConfigPath()
 
 	kubeClient, err := k8s.CreateKubeClient(kubeConfigPath, "static")
