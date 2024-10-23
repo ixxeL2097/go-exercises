@@ -8,6 +8,7 @@ class Settings(BaseSettings):
   LOG_LEVEL: str = "INFO"
   
   # K8s settings
+  KUBE_CONFIG_DEFAULT_LOCATION: str = "~/.kube/config"
   KUBE_CONFIG_PATH: str | None = None
   IN_CLUSTER: bool = False
   

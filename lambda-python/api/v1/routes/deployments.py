@@ -8,10 +8,11 @@ router = APIRouter(prefix="/deployments", tags=["deployments"])
 @router.post("/restart")
 async def restart_deployment(
   request: DeploymentRequest,
-  k8s_service: KubernetesService = Depends()
+  k8s_service: KubernetesService =  Depends()
 ):
   """Restart a deployment by updating its pod template annotations."""
-  logger.info(f"Restarting deployment: {request.name} in {request.namespace}")
+  # k8s_service = KubernetesService()
+  logger.info(f"[ PROCESSING ] > Restarting deployment: {request.name} in {request.namespace}")
   
   await k8s_service.deployment_service.restart_deployment(request.name, request.namespace)
   
@@ -23,10 +24,11 @@ async def restart_deployment(
 @router.post("/list")
 async def get_deployments(
   request: DeploymentRequest,
-  k8s_service: KubernetesService = Depends()
+  k8s_service: KubernetesService =  Depends()
 ):
   """Getting list of deployments in a specific namespace."""
-  logger.info(f"Getting deployments in {request.namespace}")
+  # k8s_service = KubernetesService()
+  logger.info(f"[ PROCESSING ] > Getting deployments in {request.namespace}")
   
   deployments = await k8s_service.deployment_service.list_deployments(request.namespace)
   deployments_name = [{"name": dep.metadata.name} for dep in deployments.items]

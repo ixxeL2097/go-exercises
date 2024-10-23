@@ -1,14 +1,17 @@
-from kubernetes import client, config, dynamic
+import threading
+from kubernetes import client, dynamic
 from core.logger import logger
 from core.config import get_settings
 from utils.exceptions import KubernetesError, ResourceNotFoundError
 from typing import Tuple, Optional
 import os
 from datetime import datetime
+from utils.kube_config_loader import load_config 
+from utils.singleton import Singleton
 
 settings = get_settings()
 
-class KubernetesService:
+class KubernetesService(Singleton):
   core_v1: client.CoreV1Api
   apps_v1: client.AppsV1Api
   version_api: client.VersionApi
@@ -16,16 +19,16 @@ class KubernetesService:
   deployment_service: 'DeploymentService'
 
   def __init__(self):
+    if self._Singleton__initialized:
+      return
+    self._Singleton__initialized = True
+    self.lock = threading.Lock()
     self._init_client()
     self.deployment_service = self.DeploymentService(self)
         
   def _init_client(self):
     try:
-      if settings.IN_CLUSTER:
-        config.load_incluster_config()
-      else:
-        config.load_kube_config(settings.KUBE_CONFIG_PATH)
-          
+      load_config(config_file=settings.KUBE_CONFIG_PATH)
       self.core_v1 = client.CoreV1Api()
       self.apps_v1 = client.AppsV1Api()
       self.version_api = client.VersionApi()
@@ -44,8 +47,12 @@ class KubernetesService:
       logger.error(f"Cannot get API version")
       raise KubernetesError(str(e))
     
-  class DeploymentService:
+  class DeploymentService(Singleton):
     def __init__(self, kubernetes_service: 'KubernetesService'):
+      if self._Singleton__initialized:
+        return
+      self._Singleton__initialized = True
+      self.lock = threading.Lock()
       self.k8s_service = kubernetes_service
 
     async def list_deployments(self, namespace: str) -> client.V1DeploymentList:

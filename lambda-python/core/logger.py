@@ -5,7 +5,7 @@ from core.config import get_settings
 settings = get_settings()
 
 def setup_logger():
-  logger = logging.getLogger(settings.APP_NAME)
+  logger = logging.getLogger("uvicorn.error")
   logger.setLevel(settings.LOG_LEVEL)
   
   formatter = logging.Formatter(

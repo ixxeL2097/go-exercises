@@ -9,8 +9,7 @@ tasks:
       TAG: '{{ .TAG | default "test" }}'
     cmds:
       - |
-        docker buildx build --no-cache \
-                            -t lambda:{{ .TAG }} .
+        docker buildx build --no-cache -t lambda:{{ .TAG }} .
 
   build:podman:
     desc: Build docker image for lambda microservice

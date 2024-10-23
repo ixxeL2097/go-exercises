@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Depends
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from core.config import get_settings
@@ -41,6 +41,9 @@ def create_app() -> FastAPI:
     )
   
   # Include routers
+  # app.include_router(health.router, dependencies=[Depends(lambda: k8s_service)])
+  # app.include_router(deployments.router, prefix="/v1", dependencies=[Depends(lambda: k8s_service)])
+
   app.include_router(health.router)
   app.include_router(deployments.router, prefix="/v1")
   
