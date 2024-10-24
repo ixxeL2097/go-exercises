@@ -10,7 +10,7 @@ tasks:
     cmds:
       - |
         docker buildx build --no-cache \
-                            -t lambda:{{ .TAG }} ./lambda
+                            -t lambda:{{ .TAG }} .
   build:proxy:
     desc: Build docker image for lambda microservice
     vars:
@@ -20,8 +20,8 @@ tasks:
         docker buildx build --no-cache \
                             --build-arg GOPROXY=direct \
                             --build-arg GONOPROXY="proxy.golang.org/*" \
-                            --build-arg GOINSECURE="golang.org,google.golang.org,gopkg.in,k8s.io,sum.golang.org,sigs.k8s.io" \
-                            -t lambda:{{ .TAG }} ./lambda
+                            --build-arg GOINSECURE="golang.org,google.golang.org,gopkg.in,k8s.io,sum.golang.org,sigs.k8s.io,mvdan.cc,github.com,honnef.co,nullprogram.com,rsc.io" \
+                            -t lambda:{{ .TAG }} .
 
   push:
     desc: Build docker image for lambda microservice
@@ -46,5 +46,9 @@ tasks:
     vars:
       PORT: '{{ .PORT | default "8081" }}'
     cmds:
-    - go -C ./lambda mod tidy
-    - go -C ./lambda run lambda.go
+    - export GOPROXY=direct 
+    - export GONOPROXY="proxy.golang.org/*"
+    - export GOPRIVATE="golang.org,google.golang.org,gopkg.in,k8s.io,sum.golang.org,sigs.k8s.io,mvdan.cc,github.com,honnef.co,nullprogram.com,rsc.io"
+    - export GOINSECURE="golang.org,google.golang.org,gopkg.in,k8s.io,sum.golang.org,sigs.k8s.io,mvdan.cc,github.com,honnef.co,nullprogram.com,rsc.io"
+    - go -C . mod tidy
+    - go -C . run lambda.go

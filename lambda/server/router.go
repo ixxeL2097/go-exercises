@@ -33,6 +33,7 @@ func NewRouter(kubeClient kubernetes.Interface, kubeDynamicClient dynamic.Interf
 		deployments := v1.Group("/deployments")
 		{
 			deployments.POST("/restart", deploymentController.HandleRestartDeployment)
+			deployments.POST("/list", deploymentController.HandleListDeployments)
 		}
 	}
 	return router
